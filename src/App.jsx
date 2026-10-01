@@ -1,0 +1,402 @@
+import { useState } from 'react'
+import './App.css'
+import WarehouseMap from './components/WarehouseMap'
+import Login from './components/Login'
+import OperationsView from './components/OperationsView'
+import ScannerModal from './components/ScannerModal'
+import {
+  WAREHOUSE_LOCATIONS,
+  WAREHOUSE_STATS,
+} from './data/warehouseConfig'
+import { mergeWarehouseInventory } from './data/warehouseInventory'
+
+const NAV_GROUPS = [
+  { title: 'TỔNG QUAN', items: [{ id: 'dashboard', label: 'Bảng điều khiển' }] },
+  {
+    title: 'KHO',
+    items: [
+      { id: 'map', label: 'Bản đồ kho' },
+      { id: 'inventory', label: 'Tồn kho' },
+      { id: 'smart', label: 'Đặt hàng thông minh' },
+    ],
+  },
+  {
+    title: 'HOẠT ĐỘNG',
+    items: [
+      { id: 'inbound', label: 'Nhập kho' },
+      { id: 'outbound', label: 'Xuất kho' },
+      { id: 'scanner', label: 'Máy quét' },
+    ],
+  },
+  {
+    title: 'QUẢN LÝ',
+    items: [
+      { id: 'customers', label: 'Khách hàng' },
+      { id: 'reports', label: 'Báo cáo' },
+      { id: 'settings', label: 'Cài đặt' },
+    ],
+  },
+]
+
+const VIEW_TITLES = Object.fromEntries(
+  NAV_GROUPS.flatMap((group) => group.items.map((item) => [item.id, item.label]))
+)
+
+function App() {
+  const [scannerOpen, setScannerOpen] = useState(false)
+  const [activeView, setActiveView] = useState('dashboard')
+  const [inboundPlacements, setInboundPlacements] = useState(() => {
+    try {
+      const savedPlacements = JSON.parse(
+        localStorage.getItem('smartLocationInboundPlacements') || '[]'
+      )
+      return Array.isArray(savedPlacements) ? savedPlacements : []
+    } catch {
+      return []
+    }
+  })
+  const [outboundLocationIds, setOutboundLocationIds] = useState(() => {
+    try {
+      const savedLocationIds = JSON.parse(
+        localStorage.getItem('smartLocationOutboundLocationIds') || '[]'
+      )
+      return Array.isArray(savedLocationIds) ? savedLocationIds : []
+    } catch {
+      return []
+    }
+  })
+  const [user, setUser] = useState(() => {
+    const savedUser = localStorage.getItem('smartLocationUser')
+
+    if (savedUser) {
+      return JSON.parse(savedUser)
+    }
+
+    return null
+  })
+
+  const warehouseLocations = mergeWarehouseInventory(
+    WAREHOUSE_LOCATIONS,
+    inboundPlacements,
+    outboundLocationIds
+  )
+
+  const handleLogin = (userData) => {
+    setUser(userData)
+
+    localStorage.setItem(
+      'smartLocationUser',
+      JSON.stringify(userData)
+    )
+  }
+
+  const handleLogout = () => {
+    localStorage.removeItem('smartLocationUser')
+    setUser(null)
+  }
+
+  const handleNavigation = (view) => {
+    setActiveView(view)
+    if (view === 'scanner') setScannerOpen(true)
+  }
+
+  const handleInboundStore = (batch, locationId) => {
+    const target = warehouseLocations.find((location) => location.id === locationId)
+    if (!target || target.status !== 'AVAILABLE') return false
+
+    const placement = {
+      locationId,
+      productCode: String(batch.productCode || '').trim(),
+      productName: String(batch.productName || '').trim(),
+      customerId: batch.customerId || null,
+      palletNote: batch.palletNote || null,
+      quantity: batch.quantity || null,
+      packageCount: 1,
+      grossWeightKg: Number(batch.grossWeightKg),
+      cbm: Number(batch.cbm) || null,
+      receivedAt: new Date().toISOString(),
+    }
+    const nextPlacements = [...inboundPlacements, placement]
+
+    try {
+      localStorage.setItem(
+        'smartLocationInboundPlacements',
+        JSON.stringify(nextPlacements)
+      )
+    } catch {
+      return false
+    }
+
+    setInboundPlacements(nextPlacements)
+    return true
+  }
+
+  const handleOutboundShip = (locationId) => {
+    const target = warehouseLocations.find((location) => location.id === locationId)
+    if (!target || target.status !== 'OCCUPIED') return false
+
+    const isInboundPlacement = inboundPlacements.some(
+      (placement) => placement.locationId === locationId
+    )
+    if (isInboundPlacement) {
+      const nextPlacements = inboundPlacements.filter(
+        (placement) => placement.locationId !== locationId
+      )
+
+      try {
+        localStorage.setItem(
+          'smartLocationInboundPlacements',
+          JSON.stringify(nextPlacements)
+        )
+      } catch {
+        return false
+      }
+
+      setInboundPlacements(nextPlacements)
+      return true
+    }
+
+    const nextLocationIds = [...new Set([...outboundLocationIds, locationId])]
+    try {
+      localStorage.setItem(
+        'smartLocationOutboundLocationIds',
+        JSON.stringify(nextLocationIds)
+      )
+    } catch {
+      return false
+    }
+
+    setOutboundLocationIds(nextLocationIds)
+    return true
+  }
+
+  const handleExportBackup = () => {
+    const backup = {
+      exportedAt: new Date().toISOString(),
+      inboundPlacements,
+      outboundLocationIds,
+    }
+    const file = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' })
+    const downloadUrl = URL.createObjectURL(file)
+    const link = document.createElement('a')
+    link.href = downloadUrl
+    link.download = 'smart-location-backup.json'
+    link.click()
+    URL.revokeObjectURL(downloadUrl)
+  }
+
+  const handleResetInventory = () => {
+    if (!window.confirm('Xóa mọi lượt nhập/xuất đã lưu trên trình duyệt này và khôi phục dữ liệu gốc?')) return
+
+    localStorage.removeItem('smartLocationInboundPlacements')
+    localStorage.removeItem('smartLocationOutboundLocationIds')
+    setInboundPlacements([])
+    setOutboundLocationIds([])
+  }
+
+  const totalLocations = WAREHOUSE_STATS.locations
+  const occupiedLocations = warehouseLocations.filter(
+    (location) => location.status !== 'AVAILABLE'
+  ).length
+  const availableLocations = warehouseLocations.filter(
+    (location) => location.status === 'AVAILABLE'
+  ).length
+
+  if (!user) {
+    return <Login onLogin={handleLogin} />
+  }
+
+  return (
+    <div className="app">
+
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="brand-icon">SL</div>
+
+          <div>
+            <h2>SMART LOCATION</h2>
+            <p>Warehouse Management</p>
+          </div>
+        </div>
+
+        <nav className="menu">
+          {NAV_GROUPS.map((group) => (
+            <div key={group.title}>
+              <p className="menu-title">{group.title}</p>
+              {group.items.map((item) => (
+                <button
+                  key={item.id}
+                  className={`menu-item ${activeView === item.id ? 'active' : ''}`}
+                  aria-current={activeView === item.id ? 'page' : undefined}
+                  onClick={() => handleNavigation(item.id)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          ))}
+        </nav>
+
+        <div className="admin">
+          <div className="avatar">A</div>
+
+<div className="user-info">
+  <strong>{user.name}</strong>
+  <p>U&I Warehouse 6</p>
+</div>
+
+<button
+  className="logout-button"
+  onClick={handleLogout}
+>
+  Đăng xuất
+</button>
+        </div>
+      </aside>
+
+      <main className="main">
+
+        <header className="topbar">
+          <div>
+            <h1>{VIEW_TITLES[activeView]}</h1>
+            <p>U&I Warehouse 6</p>
+          </div>
+
+          <button className="scan-button" onClick={() => setScannerOpen(true)}>
+            Quét QR / Mã vạch
+          </button>
+        </header>
+
+        {activeView === 'dashboard' ? (
+          <>
+        <section className="cards">
+
+          <div className="card">
+            <p>Tổng số vị trí</p>
+            <h2>{totalLocations.toLocaleString('vi-VN')}</h2>
+            <span>Dung lượng kho</span>
+          </div>
+
+          <div className="card">
+            <p>Đã sử dụng</p>
+            <h2>{occupiedLocations.toLocaleString('vi-VN')}</h2>
+            <span>{totalLocations ? `${Math.round((occupiedLocations / totalLocations) * 100)}% sử dụng` : '0% sử dụng'}</span>
+          </div>
+
+          <div className="card">
+            <p>Còn trống</p>
+            <h2>{availableLocations.toLocaleString('vi-VN')}</h2>
+            <span>Sẵn sàng cho put-away</span>
+          </div>
+
+          <div className="card">
+            <p>Đang chờ put-away</p>
+            <h2>0</h2>
+            <span>Chờ phân bổ</span>
+          </div>
+
+        </section>
+
+        <section className="content-grid">
+
+          <div className="warehouse-panel">
+
+            <div className="panel-header">
+              <div>
+                <h2>Tổng quan kho</h2>
+              </div>
+
+              <button onClick={() => setActiveView('map')}>Mở bản đồ kho</button>
+            </div>
+
+<WarehouseMap
+  locations={warehouseLocations}
+  onShipLocation={handleOutboundShip}
+/>
+
+          </div>
+
+          <div className="activity-panel">
+
+            <h2>Vị trí thông minh</h2>
+            <p className="subtitle">
+              Sắp xếp kho hỗ trợ AI
+            </p>
+
+            <div className="ai-box">
+              <div className="ai-icon">AI</div>
+
+              <h3>Sẵn sàng tối ưu</h3>
+
+              <p>
+                Quét pallet nhập kho để tính toán vị trí lưu trữ
+                tối ưu nhất một cách tự động.
+              </p>
+
+              <button onClick={() => setScannerOpen(true)}>
+                Quét lô mới & đề xuất vị trí
+              </button>
+            </div>
+
+            <div className="score-info">
+              <h3>Mô hình chấm điểm</h3>
+
+              <div>
+                <span>Chiều cao & An toàn</span>
+                <strong>35%</strong>
+              </div>
+
+              <div>
+                <span>Quãng đường di chuyển</span>
+                <strong>25%</strong>
+              </div>
+
+              <div>
+                <span>Trọng lượng & Tầng</span>
+                <strong>20%</strong>
+              </div>
+
+              <div>
+                <span>Nhóm vị trí</span>
+                <strong>15%</strong>
+              </div>
+
+              <div>
+                <span>Lịch sử di chuyển</span>
+                <strong>5%</strong>
+              </div>
+
+            </div>
+
+          </div>
+
+        </section>
+          </>
+        ) : (
+          <OperationsView
+            view={activeView}
+            locations={warehouseLocations}
+            inboundPlacements={inboundPlacements}
+            onOpenScanner={() => setScannerOpen(true)}
+            onShipLocation={handleOutboundShip}
+            onExportBackup={handleExportBackup}
+            onResetInventory={handleResetInventory}
+          />
+        )}
+
+      </main>
+
+      {scannerOpen && (
+        <ScannerModal
+          locations={warehouseLocations}
+          onStoreBatch={handleInboundStore}
+          onShipLocation={handleOutboundShip}
+          onClose={() => setScannerOpen(false)}
+        />
+      )}
+
+    </div>
+  )
+}
+
+export default App
