@@ -3,6 +3,6 @@ import { defineConfig } from 'vite'
 
 // https://vite.dev/config/
 export default defineConfig({
-  base: '/U-I-Smart-Put-away/',
+base: '/U-I-Smart-Put-away-demo/',
   plugins: [react()],
 })
