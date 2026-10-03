@@ -17,7 +17,7 @@ const NAV_GROUPS = [
     items: [
       { id: 'map', label: 'Bản đồ kho' },
       { id: 'inventory', label: 'Tồn kho' },
-      { id: 'smart', label: 'Đặt hàng thông minh' },
+      { id: 'smart', label: 'Vị trí thông minh' },
     ],
   },
   {
@@ -313,60 +313,6 @@ function App() {
   locations={warehouseLocations}
   onShipLocation={handleOutboundShip}
 />
-
-          </div>
-
-          <div className="activity-panel">
-
-            <h2>Vị trí thông minh</h2>
-            <p className="subtitle">
-              Sắp xếp kho hỗ trợ AI
-            </p>
-
-            <div className="ai-box">
-              <div className="ai-icon">AI</div>
-
-              <h3>Sẵn sàng tối ưu</h3>
-
-              <p>
-                Quét pallet nhập kho để tính toán vị trí lưu trữ
-                tối ưu nhất một cách tự động.
-              </p>
-
-              <button onClick={() => setScannerOpen(true)}>
-                Quét lô mới & đề xuất vị trí
-              </button>
-            </div>
-
-            <div className="score-info">
-              <h3>Mô hình chấm điểm</h3>
-
-              <div>
-                <span>Chiều cao & An toàn</span>
-                <strong>35%</strong>
-              </div>
-
-              <div>
-                <span>Quãng đường di chuyển</span>
-                <strong>25%</strong>
-              </div>
-
-              <div>
-                <span>Trọng lượng & Tầng</span>
-                <strong>20%</strong>
-              </div>
-
-              <div>
-                <span>Nhóm vị trí</span>
-                <strong>15%</strong>
-              </div>
-
-              <div>
-                <span>Lịch sử di chuyển</span>
-                <strong>5%</strong>
-              </div>
-
-            </div>
 
           </div>
 

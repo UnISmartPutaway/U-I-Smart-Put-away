@@ -41,8 +41,11 @@ function LocationModal({ frame, locations, onClose, onShipLocation }) {
   const handleShipSelectedLocation = () => {
     if (selectedLocation?.status !== 'OCCUPIED') return
 
-    const description = selectedLocation.productName || selectedLocation.lotId || selectedLocation.id
-    if (!window.confirm(`Xác nhận xuất ${description} khỏi vị trí ${selectedLocation.id}?`)) return
+    const items = selectedLocation.inventoryItems || []
+    const description = items.length > 1
+      ? `${items.length} lô (${items.map((item) => item.productCode).filter(Boolean).join(', ')})`
+      : selectedLocation.productName || selectedLocation.lotId || selectedLocation.id
+    if (!window.confirm(`Xác nhận xuất toàn bộ hàng ${description} khỏi vị trí ${selectedLocation.id}?`)) return
 
     if (!onShipLocation(selectedLocation.id)) {
       setShipMessage('Không thể xuất hàng tại vị trí này. Hãy kiểm tra lại trạng thái ô.')
@@ -52,6 +55,7 @@ function LocationModal({ frame, locations, onClose, onShipLocation }) {
     setSelectedLocation((current) => ({
       ...current,
       status: 'AVAILABLE',
+      inventoryItems: [],
       customerId: null,
       lotId: null,
       palletNote: null,
@@ -164,25 +168,37 @@ function LocationModal({ frame, locations, onClose, onShipLocation }) {
           <strong>Trạng thái:</strong> {formatStatus(selectedLocation.status)}
         </p>
 
-        <p>
-          <strong>Sản phẩm:</strong> {selectedLocation.productName || 'Chưa có'}
-        </p>
-
-        <p>
-          <strong>Số lượng:</strong> {selectedLocation.quantity || 'Chưa có'}
-        </p>
-
-        <p>
-          <strong>Nhà cung cấp:</strong> {selectedLocation.customerId || 'Chưa có'}
-        </p>
-
-        <p>
-            <strong>Mã lô:</strong> {selectedLocation.lotId || 'Chưa có'}
-        </p>
-
-        <p>
-          <strong>Ghi chú pallet:</strong> {selectedLocation.palletNote || 'Chưa có'}
-        </p>
+        {selectedLocation.inventoryItems?.length ? (
+          <div className="selected-location-batches">
+            <h4>Các lô trong ô ({selectedLocation.inventoryItems.length})</h4>
+            {selectedLocation.inventoryItems.map((item) => (
+              <article key={item.batchId || `${item.sourceRow}-${item.position}`}>
+                <dl className="batch-info-grid">
+                  <div><dt>Mã hàng</dt><dd>{item.productCode || '—'}</dd></div>
+                  <div><dt>Tên hàng</dt><dd>{item.productName || '—'}</dd></div>
+                  <div><dt>Số lượng</dt><dd>{item.quantity || '—'}</dd></div>
+                  <div><dt>Số kiện</dt><dd>{item.packageCount ?? '—'}</dd></div>
+                  <div><dt>Ghi chú pallet</dt><dd>{item.palletNote || '—'}</dd></div>
+                  <div><dt>Nhà cung cấp</dt><dd>{item.supplier || '—'}</dd></div>
+                  <div>
+                    <dt>Ngày nhập kho</dt>
+                    <dd>{item.receivedDate || (item.receivedAt ? new Date(item.receivedAt).toLocaleDateString('vi-VN') : '—')}</dd>
+                  </div>
+                  <div><dt>GW</dt><dd>{item.grossWeightKg ?? '—'}{item.grossWeightKg != null ? ' kg' : ''}</dd></div>
+                  <div><dt>NW</dt><dd>{item.netWeightKg ?? '—'}{item.netWeightKg != null ? ' kg' : ''}</dd></div>
+                </dl>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <>
+            <p><strong>Sản phẩm:</strong> {selectedLocation.productName || 'Chưa có'}</p>
+            <p><strong>Số lượng:</strong> {selectedLocation.quantity || 'Chưa có'}</p>
+            <p><strong>Nhà cung cấp:</strong> {selectedLocation.customerId || 'Chưa có'}</p>
+            <p><strong>Mã lô:</strong> {selectedLocation.lotId || 'Chưa có'}</p>
+            <p><strong>Ghi chú pallet:</strong> {selectedLocation.palletNote || 'Chưa có'}</p>
+          </>
+        )}
 
         {selectedLocation.status === 'OCCUPIED' && (
           <button

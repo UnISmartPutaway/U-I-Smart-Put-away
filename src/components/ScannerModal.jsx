@@ -139,23 +139,32 @@ function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
       return
     }
 
-    const productMatches = locations.filter(
-      (location) => String(location.lotId || '').trim().toLowerCase() === productCode
-    )
+    const productMatches = locations.map((location) => {
+      const matchedItems = (location.inventoryItems || []).filter(
+        (item) => String(item.productCode || '').trim().toLowerCase() === productCode
+      )
+      const legacyMatch = !location.inventoryItems?.length &&
+        String(location.lotId || '').trim().toLowerCase() === productCode
+
+      return matchedItems.length || legacyMatch
+        ? { ...location, matchedItems: matchedItems.length ? matchedItems : [location] }
+        : null
+    }).filter(Boolean)
 
     setMatches(productMatches)
     setError('')
     setRecommendations([])
 
-    const reference = productMatches[0]
+    const matchedBatches = productMatches.flatMap((location) => location.matchedItems)
+    const reference = matchedBatches[0]
     setBatchDetails({
       productCode: scanData.productCode,
       productName: scanData.productName || reference?.productName || '',
-      grossWeightKg: scanData.grossWeightKg || median(productMatches.map((item) => item.grossWeightKg)),
+      grossWeightKg: scanData.grossWeightKg || median(matchedBatches.map((item) => item.grossWeightKg)),
       heightCm: scanData.heightCm || '',
       widthCm: scanData.widthCm || '',
       depthCm: scanData.depthCm || '',
-      cbm: scanData.cbm || median(productMatches.map((item) => item.cbm)),
+      cbm: scanData.cbm || median(matchedBatches.map((item) => item.cbm)),
     })
     setBatchHint(
       productMatches.length
@@ -201,8 +210,11 @@ function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
   }
 
   const handleShipLocation = (location) => {
-    const description = location.productName || location.lotId || location.id
-    if (!window.confirm(`Xác nhận xuất ${description} khỏi vị trí ${location.id}?`)) return
+    const items = location.inventoryItems || []
+    const description = items.length > 1
+      ? `${items.length} lô (${items.map((item) => item.productCode).filter(Boolean).join(', ')})`
+      : location.productName || location.lotId || location.id
+    if (!window.confirm(`Xác nhận xuất toàn bộ hàng ${description} khỏi vị trí ${location.id}?`)) return
 
     if (!onShipLocation(location.id)) {
       setError('Không thể xuất hàng tại vị trí này. Hãy kiểm tra lại trạng thái ô.')
@@ -436,13 +448,17 @@ function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
                         {formatStatus(location.status)}
                       </span>
                     </div>
-                    <p>{location.productName || 'Chưa có tên hàng'}</p>
-                    <dl>
-                      <div><dt>Mã hàng</dt><dd>{location.lotId || 'Chưa có'}</dd></div>
-                      <div><dt>Số lượng</dt><dd>{location.quantity || 'Chưa có'}</dd></div>
-                      <div><dt>Nhà cung cấp</dt><dd>{location.customerId || 'Chưa có'}</dd></div>
-                      {location.palletNote && <div><dt>Ghi chú pallet</dt><dd>{location.palletNote}</dd></div>}
-                    </dl>
+                    {(location.matchedItems || location.inventoryItems || [location]).map((item, index) => (
+                      <div className="scanner-match-batch" key={item.batchId || item.sourceRow || `${location.id}-${index}`}>
+                        <p>{item.productName || 'Chưa có tên hàng'}</p>
+                        <dl>
+                          <div><dt>Mã hàng</dt><dd>{item.productCode || item.lotId || 'Chưa có'}</dd></div>
+                          <div><dt>Số lượng</dt><dd>{item.quantity || 'Chưa có'}</dd></div>
+                          <div><dt>Nhà cung cấp</dt><dd>{item.supplier || item.customerId || 'Chưa có'}</dd></div>
+                          {item.palletNote && <div><dt>Ghi chú pallet</dt><dd>{item.palletNote}</dd></div>}
+                        </dl>
+                      </div>
+                    ))}
                     {location.status === 'OCCUPIED' && (
                       <button
                         className="scanner-outbound-button"

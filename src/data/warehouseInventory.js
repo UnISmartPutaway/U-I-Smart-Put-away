@@ -10,6 +10,7 @@ export function mergeWarehouseInventory(locations, inboundPlacements, outboundLo
       return {
         ...location,
         status: 'OCCUPIED',
+        inventoryItems: [{ ...placement, batchId: `inbound-${placement.receivedAt}` }],
         customerId: placement.customerId || null,
         lotId: placement.productCode,
         palletNote: placement.palletNote || null,
@@ -25,6 +26,7 @@ export function mergeWarehouseInventory(locations, inboundPlacements, outboundLo
       return {
         ...location,
         status: 'AVAILABLE',
+        inventoryItems: [],
         customerId: null,
         lotId: null,
         palletNote: null,

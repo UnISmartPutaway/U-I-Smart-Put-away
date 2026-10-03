@@ -22,9 +22,26 @@ function LocationTable({ locations, allowShipment, onShipLocation }) {
       location.lotId,
       location.productName,
       location.customerId,
+      ...(location.inventoryItems || []).flatMap((item) => [
+        item.productCode,
+        item.productName,
+        item.supplier,
+        item.palletNote,
+      ]),
     ].join(' ').toLocaleLowerCase()
     return searchable.includes(normalizedQuery)
+  }).sort((left, right) => {
+    const leftAvailable = left.status === 'AVAILABLE'
+    const rightAvailable = right.status === 'AVAILABLE'
+    if (leftAvailable !== rightAvailable) return leftAvailable ? 1 : -1
+    return left.id.localeCompare(right.id)
   })
+  const occupiedCount = locations.filter((location) => location.status === 'OCCUPIED').length
+  const countLabel = normalizedQuery
+    ? `${filteredLocations.length.toLocaleString('vi-VN')} kết quả`
+    : allowShipment
+      ? `${filteredLocations.length.toLocaleString('vi-VN')} vị trí có hàng`
+      : `${occupiedCount.toLocaleString('vi-VN')} có hàng`
   const pageCount = Math.max(1, Math.ceil(filteredLocations.length / PAGE_SIZE))
   const visiblePage = Math.min(page, pageCount)
   const pageLocations = filteredLocations.slice(
@@ -33,8 +50,11 @@ function LocationTable({ locations, allowShipment, onShipLocation }) {
   )
 
   const handleShip = (location) => {
-    const description = location.productName || location.lotId || location.id
-    if (!window.confirm(`Xác nhận xuất ${description} khỏi vị trí ${location.id}?`)) return
+    const items = location.inventoryItems || []
+    const description = items.length > 1
+      ? `${items.length} lô (${items.map((item) => item.productCode).filter(Boolean).join(', ')})`
+      : location.productName || location.lotId || location.id
+    if (!window.confirm(`Xác nhận xuất toàn bộ hàng ${description} khỏi vị trí ${location.id}?`)) return
 
     setActionMessage(
       onShipLocation(location.id)
@@ -56,7 +76,7 @@ function LocationTable({ locations, allowShipment, onShipLocation }) {
           }}
           placeholder="Nhập từ khóa cần tìm"
         />
-        <span>{filteredLocations.length.toLocaleString('vi-VN')} vị trí</span>
+        <span>{countLabel}</span>
       </div>
 
       {actionMessage && <p className="operations-message" role="status">{actionMessage}</p>}
@@ -84,8 +104,12 @@ function LocationTable({ locations, allowShipment, onShipLocation }) {
                       {formatStatus(location.status)}
                     </span>
                   </td>
-                  <td>{location.lotId || '—'}</td>
-                  <td>{location.productName || '—'}</td>
+                  <td>{location.inventoryItems?.length
+                    ? location.inventoryItems.map((item) => item.productCode).filter(Boolean).join(', ')
+                    : location.lotId || '—'}</td>
+                  <td>{location.inventoryItems?.length
+                    ? location.inventoryItems.map((item) => item.productName).filter(Boolean).join(', ')
+                    : location.productName || '—'}</td>
                   <td>{location.customerId || '—'}</td>
                   <td>{location.grossWeightKg || '—'}</td>
                   {allowShipment && (
@@ -210,11 +234,17 @@ function OperationsView({
   if (view === 'customers') {
     const customers = new Map()
     for (const location of occupied) {
-      const customerId = location.customerId || 'Chưa xác định'
-      const current = customers.get(customerId) || { customerId, slots: 0, products: new Set() }
-      current.slots += 1
-      if (location.productName) current.products.add(location.productName)
-      customers.set(customerId, current)
+      const items = location.inventoryItems?.length
+        ? location.inventoryItems
+        : [{ supplier: location.customerId, productName: location.productName }]
+
+      for (const item of items) {
+        const customerId = item.supplier || 'Chưa xác định'
+        const current = customers.get(customerId) || { customerId, slots: new Set(), products: new Set() }
+        current.slots.add(location.id)
+        if (item.productName) current.products.add(item.productName)
+        customers.set(customerId, current)
+      }
     }
     const customerRows = [...customers.values()].sort((left, right) => right.slots - left.slots)
 
@@ -232,7 +262,7 @@ function OperationsView({
                 {customerRows.map((customer) => (
                   <tr key={customer.customerId}>
                     <td><strong>{customer.customerId}</strong></td>
-                    <td>{customer.slots.toLocaleString('vi-VN')}</td>
+                    <td>{customer.slots.size.toLocaleString('vi-VN')}</td>
                     <td>{[...customer.products].slice(0, 5).join(', ') || '—'}</td>
                   </tr>
                 ))}
@@ -301,6 +331,42 @@ function OperationsView({
             </button>
           </div>
         </section>
+      </>
+    )
+  }
+
+  if (view === 'smart') {
+    return (
+      <>
+        <section className="operations-heading">
+          <div>
+            <h2>Vị trí thông minh</h2>
+            <p>Nhập thông tin lô để xếp hạng vị trí phù hợp trong kho.</p>
+          </div>
+          <button className="operations-button" type="button" onClick={onOpenScanner}>
+            Quét lô và đề xuất vị trí
+          </button>
+        </section>
+
+        <div className="operations-smart-layout">
+          <section className="operations-smart-intro">
+            <div className="operations-smart-mark">AI</div>
+            <h3>Sẵn sàng tối ưu</h3>
+            <p>
+              Quét pallet nhập kho để tính toán vị trí lưu trữ phù hợp.
+              Bạn vẫn có thể chọn một ô trống khác trước khi xác nhận.
+            </p>
+          </section>
+
+          <section className="operations-panel operations-smart-model">
+            <h3>Mô hình chấm điểm</h3>
+            <div><span>Chiều cao &amp; An toàn</span><strong>35%</strong></div>
+            <div><span>Quãng đường di chuyển</span><strong>25%</strong></div>
+            <div><span>Trọng lượng &amp; Tầng</span><strong>20%</strong></div>
+            <div><span>Nhóm vị trí</span><strong>15%</strong></div>
+            <div><span>Lịch sử di chuyển</span><strong>5%</strong></div>
+          </section>
+        </div>
       </>
     )
   }

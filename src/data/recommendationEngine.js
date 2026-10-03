@@ -85,7 +85,10 @@ export function recommendStorageSlots(batch = {}, locations, limit = 5) {
 
   if (normalizedProduct) {
     for (const location of occupied) {
-      if (normalizeGroup(location.productName) !== normalizedProduct) continue
+      const productNames = location.inventoryItems?.length
+        ? location.inventoryItems.map((item) => item.productName)
+        : [location.productName]
+      if (!productNames.some((name) => normalizeGroup(name) === normalizedProduct)) continue
       const key = `${location.row}-${location.zone}`
       nearbyGroups.set(key, (nearbyGroups.get(key) || 0) + 1)
     }
