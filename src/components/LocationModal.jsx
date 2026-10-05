@@ -26,7 +26,7 @@ function LocationModal({ frame, locations, onClose, onShipLocation }) {
       OCCUPIED: 'Có hàng',
       MAINTENANCE: 'Bảo trì',
       UNDER_MAINTENANCE: 'Bảo trì',
-      RESERVED: 'Đã đặt chỗ',
+      RESERVED: 'Đã giữ chỗ · chờ put-away',
       BLOCKED: 'Ô lỗi / đã khóa',
     }
 

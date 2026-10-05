@@ -1,5 +1,5 @@
 // ======================================================
-// SMART LOCATION - U&I WAREHOUSE 6
+// U&I SMART PUT-AWAY - WAREHOUSE 6
 // Warehouse configuration - Floor 1
 // ======================================================
 

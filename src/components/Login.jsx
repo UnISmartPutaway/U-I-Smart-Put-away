@@ -1,27 +1,48 @@
 import { useState } from 'react'
+import BrandMark from './BrandMark'
+import { readAccountPasswordHashes, verifyAccountPassword } from '../data/accountSecurity'
 
 function Login({ onLogin }) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
+    setIsSubmitting(true)
 
-    if (username === 'admin' && password === '123456') {
-      setError('')
-
-      onLogin({
-        username: 'admin',
-        name: 'Administrator',
-        role: 'ADMIN',
-      })
-
-      return
+    const demoAccounts = {
+      admin: { name: 'Nhân viên kiểm hàng', role: 'ADMIN' },
+      mover: { name: 'Nhân viên nâng chuyển', role: 'MOVER' },
+      lifter: { name: 'Nhân viên nâng hạ', role: 'LIFTER' },
     }
+    const account = demoAccounts[username.trim().toLowerCase()]
 
-    setError('Tên đăng nhập hoặc mật khẩu không đúng.')
+    try {
+      const normalizedUsername = username.trim().toLowerCase()
+      const passwordHashes = readAccountPasswordHashes()
+      const savedHash = passwordHashes[normalizedUsername]
+      const passwordMatches = savedHash
+        ? await verifyAccountPassword(password, savedHash)
+        : password === '123456'
+
+      if (Object.hasOwn(demoAccounts, normalizedUsername) && passwordMatches) {
+        setError('')
+        onLogin({
+          username: normalizedUsername,
+          ...account,
+        })
+        return
+      }
+
+      setError('Tên đăng nhập hoặc mật khẩu không đúng.')
+    } catch (loginError) {
+      setError(loginError.message || 'Không thể xác thực tài khoản trên trình duyệt này.')
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   return (
@@ -30,21 +51,22 @@ function Login({ onLogin }) {
       <div className="login-card">
 
         <div className="login-logo">
-          SL
+          <BrandMark />
         </div>
 
-        <h1>SMART LOCATION</h1>
+        <h1>U&amp;I Smart Put-away</h1>
 
         <p className="login-subtitle">
-          Warehouse Management System
+          Hệ thống điều phối cất hàng thông minh
         </p>
 
         <form onSubmit={handleSubmit}>
 
           <div className="login-field">
-            <label>Tên đăng nhập</label>
+            <label htmlFor="login-username">Tên đăng nhập</label>
 
             <input
+              id="login-username"
               type="text"
               placeholder="Nhập tên đăng nhập"
               value={username}
@@ -54,11 +76,12 @@ function Login({ onLogin }) {
           </div>
 
           <div className="login-field">
-            <label>Mật khẩu</label>
+            <label htmlFor="login-password">Mật khẩu</label>
 
             <div className="password-box">
 
               <input
+                id="login-password"
                 type={showPassword ? 'text' : 'password'}
                 placeholder="Nhập mật khẩu"
                 value={password}
@@ -101,21 +124,26 @@ function Login({ onLogin }) {
           <button
             type="submit"
             className="login-button"
+            disabled={isSubmitting}
           >
-            Đăng nhập
+            {isSubmitting ? 'Đang xác thực...' : 'Đăng nhập'}
           </button>
 
         </form>
 
         <div className="login-demo">
-          <p>Tài khoản thử nghiệm</p>
+          <p>Tài khoản mô phỏng · mật khẩu ban đầu: <b>123456</b></p>
 
           <span>
-            Username: <b>admin</b>
+            Admin / kiểm hàng: <b>admin</b>
           </span>
 
           <span>
-            Password: <b>123456</b>
+            Nâng chuyển: <b>mover</b>
+          </span>
+
+          <span>
+            Nâng hạ: <b>lifter</b>
           </span>
         </div>
 

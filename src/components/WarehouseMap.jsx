@@ -106,6 +106,7 @@ function createWarehouseRoutes(mapInner) {
 const getStatusStyle = (status) => {
   if (status === 'OCCUPIED') return 'occupied'
   if (status === 'PARTIAL') return 'partial'
+  if (status === 'RESERVED') return 'reserved'
   if (status === 'BLOCKED') return 'blocked'
   if (status === 'MAINTENANCE' || status === 'UNDER_MAINTENANCE') return 'maintenance'
   return 'available'
@@ -114,6 +115,7 @@ const getStatusStyle = (status) => {
 const getStatusLabel = (status) => {
   if (status === 'OCCUPIED') return 'Đầy 18/18 vị trí'
   if (status === 'PARTIAL') return 'Có hàng, chưa đầy 18 vị trí'
+  if (status === 'RESERVED') return 'Có lô đang chờ put-away'
   if (status === 'BLOCKED') return 'Có vị trí bị khóa do lỗi'
   if (status === 'MAINTENANCE' || status === 'UNDER_MAINTENANCE') return 'Bảo trì'
   return 'Trống'
@@ -132,9 +134,15 @@ function WarehouseMap({
   const mapInnerRef = useRef(null)
   const frameStatusById = locations.reduce((statuses, location) => {
     const frameId = `${location.row}-${location.frame}`
-    const frameStatus = statuses.get(frameId) || { occupiedCount: 0, blockedCount: 0, maintenanceStatus: null }
+    const frameStatus = statuses.get(frameId) || {
+      occupiedCount: 0,
+      reservedCount: 0,
+      blockedCount: 0,
+      maintenanceStatus: null,
+    }
 
     if (location.status === 'OCCUPIED') frameStatus.occupiedCount += 1
+    if (location.status === 'RESERVED') frameStatus.reservedCount += 1
     if (location.isBlocked || location.status === 'BLOCKED') frameStatus.blockedCount += 1
     if (location.status === 'MAINTENANCE' || location.status === 'UNDER_MAINTENANCE') {
       frameStatus.maintenanceStatus = location.status
@@ -148,6 +156,7 @@ function WarehouseMap({
   const getFrameStatus = (frameId) => {
     const frameStatus = frameStatusById.get(frameId)
     if (frameStatus?.blockedCount) return 'BLOCKED'
+    if (frameStatus?.reservedCount) return 'RESERVED'
     if (!frameStatus?.occupiedCount) return frameStatus?.maintenanceStatus || 'AVAILABLE'
     if (frameStatus.occupiedCount >= SLOTS_PER_FRAME) return 'OCCUPIED'
     return 'PARTIAL'
@@ -243,6 +252,11 @@ function WarehouseMap({
             <span>
               <i className="legend-box available"></i>
               Trống
+            </span>
+
+            <span>
+              <i className="legend-box reserved"></i>
+              Đã giữ chỗ · chờ put-away
             </span>
 
             <span>

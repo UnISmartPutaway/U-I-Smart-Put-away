@@ -1,9 +1,18 @@
-export function mergeWarehouseInventory(locations, inboundPlacements, outboundLocationIds, blockedLocationIds = []) {
+export function mergeWarehouseInventory(
+  locations,
+  inboundPlacements,
+  outboundLocationIds,
+  blockedLocationIds = [],
+  activePutAwayTasks = []
+) {
   const inboundByLocation = new Map(
     inboundPlacements.map((placement) => [placement.locationId, placement])
   )
   const outboundLocationSet = new Set(outboundLocationIds)
   const blockedLocationSet = new Set(blockedLocationIds)
+  const reservedByLocation = new Map(
+    activePutAwayTasks.map((task) => [task.locationId, task])
+  )
 
   return locations.map((location) => {
     const isBlocked = blockedLocationSet.has(location.id)
@@ -40,6 +49,20 @@ export function mergeWarehouseInventory(locations, inboundPlacements, outboundLo
         cbm: null,
         grossWeightKg: null,
         netWeightKg: null,
+      }
+    }
+
+    const reservedTask = reservedByLocation.get(location.id)
+    if (reservedTask) {
+      return {
+        ...location,
+        status: isBlocked ? 'BLOCKED' : 'RESERVED',
+        isBlocked,
+        reservedTask,
+        lotId: reservedTask.productCode,
+        productName: reservedTask.productName,
+        grossWeightKg: reservedTask.grossWeightKg,
+        cbm: reservedTask.cbm,
       }
     }
 

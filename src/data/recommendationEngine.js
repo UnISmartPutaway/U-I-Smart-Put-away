@@ -7,11 +7,17 @@ const SCORE_WEIGHTS = {
 }
 
 const INBOUND_ROW = 101
-const SLOT_HEIGHT_CM = 90
-const SLOT_WIDTH_CM = 80
-const SLOT_DEPTH_CM = 80
-const SLOT_MAX_GROSS_WEIGHT_KG = 1000
-const SLOT_MAX_VOLUME_CBM = SLOT_HEIGHT_CM * SLOT_WIDTH_CM * SLOT_DEPTH_CM / 1_000_000
+export const STORAGE_SLOT_LIMITS = {
+  heightCm: 200,
+  widthCm: 400,
+  depthCm: 180,
+  maxGrossWeightKg: 2000,
+}
+const SLOT_MAX_VOLUME_CBM =
+  STORAGE_SLOT_LIMITS.heightCm *
+  STORAGE_SLOT_LIMITS.widthCm *
+  STORAGE_SLOT_LIMITS.depthCm /
+  1_000_000
 
 function clamp(value, min = 0, max = 100) {
   return Math.min(max, Math.max(min, value))
@@ -50,10 +56,14 @@ export function fitsStorageSlot(batch = {}) {
   )
 
   if (!hasDimensions || !Number.isFinite(weight) || weight <= 0) return false
-  if (weight > SLOT_MAX_GROSS_WEIGHT_KG) return false
+  if (weight > STORAGE_SLOT_LIMITS.maxGrossWeightKg) return false
 
   const packageDimensions = [height, width, depth].sort((left, right) => right - left)
-  const slotDimensions = [SLOT_HEIGHT_CM, SLOT_WIDTH_CM, SLOT_DEPTH_CM].sort((left, right) => right - left)
+  const slotDimensions = [
+    STORAGE_SLOT_LIMITS.heightCm,
+    STORAGE_SLOT_LIMITS.widthCm,
+    STORAGE_SLOT_LIMITS.depthCm,
+  ].sort((left, right) => right - left)
   if (!packageDimensions.every((dimension, index) => dimension <= slotDimensions[index])) return false
 
   return getBatchVolume(batch) <= SLOT_MAX_VOLUME_CBM + 0.005
@@ -98,7 +108,7 @@ export function recommendStorageSlots(batch = {}, locations, limit = 5, excluded
 
   const weightRatio = clamp(weight / weightScale, 0, 1)
   const volumeRatio = clamp(volume / volumeScale, 0, 1)
-  const heightRatio = clamp(height / SLOT_HEIGHT_CM, 0, 1)
+  const heightRatio = clamp(height / STORAGE_SLOT_LIMITS.heightCm, 0, 1)
 
   return available
     .map((location) => {

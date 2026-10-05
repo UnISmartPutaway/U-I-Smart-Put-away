@@ -1,8 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { BrowserMultiFormatReader } from '@zxing/browser'
 import WarehouseMap from './WarehouseMap'
 import { getLocalFrameNumber } from '../data/warehouseConfig'
-import { fitsStorageSlot, recommendStorageSlots } from '../data/recommendationEngine'
+import {
+  fitsStorageSlot,
+  recommendStorageSlots,
+  STORAGE_SLOT_LIMITS,
+} from '../data/recommendationEngine'
 import { SAMPLE_INBOUND_BATCHES } from '../data/sampleInboundBatches'
 
 function normalizeLocationCode(value) {
@@ -35,6 +39,12 @@ function extractScanData(value) {
         widthCm: payload.widthCm ?? payload.width ?? '',
         depthCm: payload.depthCm ?? payload.depth ?? '',
         cbm: payload.cbm ?? payload.volume ?? '',
+        palletCode: payload.palletCode || payload.palletId || '',
+        lotCode: payload.lotCode || payload.batchCode || '',
+        quantity: payload.quantity ?? '',
+        supplier: payload.supplier || payload.customerId || '',
+        netWeightKg: payload.netWeightKg ?? '',
+        palletNote: payload.palletNote || '',
       }
     }
   } catch {
@@ -54,6 +64,12 @@ function extractScanData(value) {
         widthCm: url.searchParams.get('widthCm') || '',
         depthCm: url.searchParams.get('depthCm') || '',
         cbm: url.searchParams.get('cbm') || '',
+        palletCode: url.searchParams.get('palletCode') || url.searchParams.get('palletId') || '',
+        lotCode: url.searchParams.get('lotCode') || url.searchParams.get('batchCode') || '',
+        quantity: url.searchParams.get('quantity') || '',
+        supplier: url.searchParams.get('supplier') || url.searchParams.get('customerId') || '',
+        netWeightKg: url.searchParams.get('netWeightKg') || '',
+        palletNote: url.searchParams.get('palletNote') || '',
       }
     }
   } catch {
@@ -70,6 +86,12 @@ function extractScanData(value) {
     widthCm: '',
     depthCm: '',
     cbm: '',
+    palletCode: '',
+    lotCode: '',
+    quantity: '',
+    supplier: '',
+    netWeightKg: '',
+    palletNote: '',
   }
 }
 
@@ -95,9 +117,17 @@ function getBatchSizeError(batch) {
   }
 
   const packageDimensions = dimensions.sort((left, right) => right - left)
-  const slotDimensions = [90, 80, 80]
+  const slotDimensions = [
+    STORAGE_SLOT_LIMITS.heightCm,
+    STORAGE_SLOT_LIMITS.widthCm,
+    STORAGE_SLOT_LIMITS.depthCm,
+  ].sort((left, right) => right - left)
   if (!packageDimensions.every((dimension, index) => dimension <= slotDimensions[index])) {
-    return 'Kiện hàng vượt kích thước ô tiêu chuẩn 90 × 80 × 80 cm.'
+    return `Kiện hàng vượt kích thước ô tối đa ${STORAGE_SLOT_LIMITS.heightCm} × ${STORAGE_SLOT_LIMITS.widthCm} × ${STORAGE_SLOT_LIMITS.depthCm} cm.`
+  }
+
+  if (Number(batch.grossWeightKg) > STORAGE_SLOT_LIMITS.maxGrossWeightKg) {
+    return `Tải trọng kiện hàng vượt quá ${STORAGE_SLOT_LIMITS.maxGrossWeightKg} kg.`
   }
 
   if (!fitsStorageSlot(batch)) {
@@ -113,6 +143,10 @@ function ScannerModal({
   onReportLocationMismatch,
   onShipLocation,
   reportedMismatchLocationIds = [],
+  initialScanValue = '',
+  externalSelectedLocationId = '',
+  onAnalysisChange,
+  onLocationScanned,
 }) {
   const videoRef = useRef(null)
   const controlsRef = useRef(null)
@@ -130,11 +164,12 @@ function ScannerModal({
   const [error, setError] = useState('')
   const [cameraError, setCameraError] = useState('')
   const [showScanResultPopup, setShowScanResultPopup] = useState(false)
+  const initialLookupRef = useRef('')
 
   const topRecommendation = recommendations[0] || null
   const recommendationPreview = recommendations.slice(0, 4)
   const selectedRecommendation = recommendationPreview.find(
-    (recommendation) => recommendation.location.id === selectedRecommendationId
+    (recommendation) => recommendation.location.id === (externalSelectedLocationId || selectedRecommendationId)
   ) || topRecommendation
   const selectedIsBest = selectedRecommendation?.location.id === topRecommendation?.location.id
   const selectedLocationId = selectionMethod === 'MANUAL'
@@ -162,7 +197,29 @@ function ScannerModal({
 
   useEffect(() => () => controlsRef.current?.stop(), [])
 
-  const searchCode = (value) => {
+  const applyRecommendations = useCallback((nextBatchDetails, overrideMessage = '') => {
+    const results = recommendStorageSlots(nextBatchDetails, locations, 4, reportedMismatchLocationIds)
+    setRecommendations(results)
+    setSelectedRecommendationId(results[0]?.location.id || '')
+    setSelectionMethod('RECOMMENDATION')
+    setShowScanResultPopup(true)
+    setStoreMessage('')
+    setError(results.length ? '' : overrideMessage || 'Không có ô trống phù hợp với kích thước hoặc tải trọng của lô hàng.')
+    onAnalysisChange?.({
+      batch: nextBatchDetails,
+      recommendations: results,
+      selectedLocationId: results[0]?.location.id || '',
+      status: results.length ? 'ready' : 'analyzing',
+    })
+  }, [locations, onAnalysisChange, reportedMismatchLocationIds])
+
+  const searchCode = useCallback((value) => {
+    onAnalysisChange?.({
+      status: 'reading',
+      batch: null,
+      recommendations: [],
+      selectedLocationId: '',
+    })
     setStoreMessage('')
     setSelectedSampleId('')
     setManualLocationId('')
@@ -171,6 +228,7 @@ function ScannerModal({
     if (!raw) {
       setError('Nhập mã hàng hoặc mã vị trí để tra cứu.')
       setMatches([])
+      onAnalysisChange?.({ status: 'idle', batch: null, recommendations: [], selectedLocationId: '' })
       return
     }
 
@@ -188,6 +246,8 @@ function ScannerModal({
       setManualLocationId('')
       setBatchHint('')
       setError('')
+      onLocationScanned?.(exactLocation.id)
+      onAnalysisChange?.({ status: 'idle', batch: null, recommendations: [], selectedLocationId: '' })
       return
     }
 
@@ -197,6 +257,7 @@ function ScannerModal({
       setBatchDetails(null)
       setShowScanResultPopup(false)
       setError('Không tìm thấy vị trí khớp với mã vừa quét.')
+      onAnalysisChange?.({ status: 'idle', batch: null, recommendations: [], selectedLocationId: '' })
       return
     }
 
@@ -221,6 +282,7 @@ function ScannerModal({
       setBatchDetails(null)
       setBatchHint('')
       setShowScanResultPopup(false)
+      onAnalysisChange?.({ status: 'idle', batch: null, recommendations: [], selectedLocationId: '' })
       return
     }
 
@@ -234,6 +296,12 @@ function ScannerModal({
       widthCm: scanData.widthCm || '',
       depthCm: scanData.depthCm || '',
       cbm: scanData.cbm || median(matchedBatches.map((item) => item.cbm)),
+      palletCode: scanData.palletCode || '',
+      lotCode: scanData.lotCode || '',
+      quantity: scanData.quantity || '',
+      supplier: scanData.supplier || '',
+      netWeightKg: scanData.netWeightKg || '',
+      palletNote: scanData.palletNote || '',
     }
 
     setBatchDetails(nextBatchDetails)
@@ -244,17 +312,15 @@ function ScannerModal({
         : 'Mã mới chưa có dữ liệu lịch sử. Nhập thông số lô để nhận đề xuất.'
     )
     applyRecommendations(nextBatchDetails)
-  }
+  }, [applyRecommendations, locations, onAnalysisChange, onLocationScanned])
 
-  const applyRecommendations = (nextBatchDetails, overrideMessage = '') => {
-    const results = recommendStorageSlots(nextBatchDetails, locations, 4, reportedMismatchLocationIds)
-    setRecommendations(results)
-    setSelectedRecommendationId(results[0]?.location.id || '')
-    setSelectionMethod('RECOMMENDATION')
-    setShowScanResultPopup(true)
-    setStoreMessage('')
-    setError(results.length ? '' : overrideMessage || 'Không có ô trống phù hợp với kích thước hoặc tải trọng của lô hàng.')
-  }
+  useEffect(() => {
+    const code = initialScanValue.trim()
+    if (!code || initialLookupRef.current === code) return
+    initialLookupRef.current = code
+    setScanValue(code)
+    searchCode(code)
+  }, [initialScanValue, searchCode])
 
   const handleSubmit = (event) => {
     event.preventDefault()
@@ -270,6 +336,12 @@ function ScannerModal({
     setSelectedRecommendationId('')
     setSelectionMethod('RECOMMENDATION')
     setError('')
+    onAnalysisChange?.({
+      batch: { ...batchDetails, [name]: value },
+      recommendations: [],
+      selectedLocationId: '',
+      status: 'analyzing',
+    })
   }
 
   const handleSampleSelect = (event) => {
@@ -321,7 +393,7 @@ function ScannerModal({
     }
 
     const locationId = selectedLocation.id
-    if (!window.confirm(`Xác nhận cất ${batchDetails.productName || batchDetails.productCode} vào vị trí ${locationId}?`)) return
+    if (!window.confirm(`Tạo lệnh put-away cho ${batchDetails.productName || batchDetails.productCode} tại ${locationId}? Lô sẽ chờ người nâng chuyển đưa đến vị trí này.`)) return
 
     if (!onStoreBatch(batchDetails, locationId, {
       suggestedLocationId: topRecommendation?.location.id || '',
@@ -332,7 +404,13 @@ function ScannerModal({
     }
 
     setError('')
-    setStoreMessage(`Đã cất ${batchDetails.productName || batchDetails.productCode} vào ${locationId}.`)
+    setStoreMessage(`Đã tạo lệnh di chuyển ${batchDetails.productName || batchDetails.productCode} đến ${locationId}. Lô đang chờ người nâng chuyển nhận việc.`)
+    onAnalysisChange?.({
+      batch: batchDetails,
+      recommendations,
+      selectedLocationId: locationId,
+      status: 'confirmed',
+    })
     setBatchDetails(null)
     setRecommendations([])
     setSelectedRecommendationId('')
@@ -357,6 +435,12 @@ function ScannerModal({
     setSelectionMethod('RECOMMENDATION')
     setError(results.length ? '' : 'Đã ghi nhận sai lệch, nhưng hiện không còn vị trí phù hợp khác.')
     setStoreMessage(`Đã ghi nhận ${locationId} cần kiểm kê và loại vị trí này khỏi đề xuất.`)
+    onAnalysisChange?.({
+      batch: batchDetails,
+      recommendations: results,
+      selectedLocationId: results[0]?.location.id || '',
+      status: results.length ? 'ready' : 'analyzing',
+    })
   }
 
   const handleShipLocation = (location) => {
@@ -431,6 +515,7 @@ function ScannerModal({
     if (status === 'OCCUPIED') return 'Có hàng'
     if (status === 'MAINTENANCE' || status === 'UNDER_MAINTENANCE') return 'Bảo trì'
     if (status === 'AVAILABLE') return 'Trống'
+    if (status === 'RESERVED') return 'Đã giữ chỗ · chờ put-away'
     if (status === 'BLOCKED') return 'Ô lỗi / đã khóa'
     return status || 'Chưa xác định'
   }
@@ -507,6 +592,12 @@ function ScannerModal({
                             setSelectedRecommendationId(recommendation.location.id)
                             setSelectionMethod('RECOMMENDATION')
                             setError('')
+                            onAnalysisChange?.({
+                              batch: batchDetails,
+                              recommendations,
+                              selectedLocationId: recommendation.location.id,
+                              status: 'ready',
+                            })
                           }}
                         >
                           <div className="scanner-result-slot-item__top">
