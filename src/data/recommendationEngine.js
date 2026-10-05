@@ -7,9 +7,9 @@ const SCORE_WEIGHTS = {
 }
 
 const INBOUND_ROW = 101
-const SLOT_HEIGHT_CM = 180
-const SLOT_WIDTH_CM = 400
-const SLOT_DEPTH_CM = 180
+const SLOT_HEIGHT_CM = 90
+const SLOT_WIDTH_CM = 80
+const SLOT_DEPTH_CM = 80
 const SLOT_MAX_GROSS_WEIGHT_KG = 1000
 const SLOT_MAX_VOLUME_CBM = SLOT_HEIGHT_CM * SLOT_WIDTH_CM * SLOT_DEPTH_CM / 1_000_000
 
@@ -50,24 +50,26 @@ export function fitsStorageSlot(batch = {}) {
   )
 
   if (!hasDimensions || !Number.isFinite(weight) || weight <= 0) return false
-  if (weight > SLOT_MAX_GROSS_WEIGHT_KG || height > SLOT_HEIGHT_CM) return false
+  if (weight > SLOT_MAX_GROSS_WEIGHT_KG) return false
 
-  const fitsFootprint =
-    (width <= SLOT_WIDTH_CM && depth <= SLOT_DEPTH_CM) ||
-    (depth <= SLOT_WIDTH_CM && width <= SLOT_DEPTH_CM)
-  if (!fitsFootprint) return false
+  const packageDimensions = [height, width, depth].sort((left, right) => right - left)
+  const slotDimensions = [SLOT_HEIGHT_CM, SLOT_WIDTH_CM, SLOT_DEPTH_CM].sort((left, right) => right - left)
+  if (!packageDimensions.every((dimension, index) => dimension <= slotDimensions[index])) return false
 
-  return getBatchVolume(batch) <= SLOT_MAX_VOLUME_CBM
+  return getBatchVolume(batch) <= SLOT_MAX_VOLUME_CBM + 0.005
 }
 
-export function recommendStorageSlots(batch = {}, locations, limit = 5) {
+export function recommendStorageSlots(batch = {}, locations, limit = 5, excludedLocationIds = []) {
   if (!fitsStorageSlot(batch)) return []
 
   const weight = Number(batch.grossWeightKg)
   const height = Number(batch.heightCm)
   const volume = getBatchVolume(batch)
 
-  const available = locations.filter((location) => location.status === 'AVAILABLE')
+  const excludedLocations = new Set(excludedLocationIds)
+  const available = locations.filter(
+    (location) => location.status === 'AVAILABLE' && !location.isBlocked && !excludedLocations.has(location.id)
+  )
   if (!available.length) return []
 
   const highestLevel = locations.reduce(

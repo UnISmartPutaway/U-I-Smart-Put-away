@@ -27,6 +27,7 @@ function LocationModal({ frame, locations, onClose, onShipLocation }) {
       MAINTENANCE: 'Bảo trì',
       UNDER_MAINTENANCE: 'Bảo trì',
       RESERVED: 'Đã đặt chỗ',
+      BLOCKED: 'Ô lỗi / đã khóa',
     }
 
     return labels[status] || status || 'Chưa xác định'
@@ -35,11 +36,15 @@ function LocationModal({ frame, locations, onClose, onShipLocation }) {
   const getStatusStyle = (status) => {
     if (status === 'OCCUPIED') return 'occupied-cell'
     if (status === 'MAINTENANCE' || status === 'UNDER_MAINTENANCE') return 'maintenance-cell'
+    if (status === 'BLOCKED') return 'blocked-cell'
     return 'available-cell'
   }
 
   const handleShipSelectedLocation = () => {
-    if (selectedLocation?.status !== 'OCCUPIED') return
+    const hasStoredGoods = selectedLocation?.status === 'OCCUPIED' ||
+      (selectedLocation?.status === 'BLOCKED' &&
+        (selectedLocation.inventoryItems?.length || selectedLocation.lotId))
+    if (!hasStoredGoods) return
 
     const items = selectedLocation.inventoryItems || []
     const description = items.length > 1
@@ -54,7 +59,7 @@ function LocationModal({ frame, locations, onClose, onShipLocation }) {
 
     setSelectedLocation((current) => ({
       ...current,
-      status: 'AVAILABLE',
+      status: selectedLocation.isBlocked ? 'BLOCKED' : 'AVAILABLE',
       inventoryItems: [],
       customerId: null,
       lotId: null,
@@ -200,7 +205,9 @@ function LocationModal({ frame, locations, onClose, onShipLocation }) {
           </>
         )}
 
-        {selectedLocation.status === 'OCCUPIED' && (
+        {(selectedLocation.status === 'OCCUPIED' ||
+          (selectedLocation.status === 'BLOCKED' &&
+            (selectedLocation.inventoryItems?.length || selectedLocation.lotId))) && (
           <button
             className="location-ship-button"
             type="button"

@@ -1,15 +1,18 @@
-export function mergeWarehouseInventory(locations, inboundPlacements, outboundLocationIds) {
+export function mergeWarehouseInventory(locations, inboundPlacements, outboundLocationIds, blockedLocationIds = []) {
   const inboundByLocation = new Map(
     inboundPlacements.map((placement) => [placement.locationId, placement])
   )
   const outboundLocationSet = new Set(outboundLocationIds)
+  const blockedLocationSet = new Set(blockedLocationIds)
 
   return locations.map((location) => {
+    const isBlocked = blockedLocationSet.has(location.id)
     const placement = inboundByLocation.get(location.id)
     if (placement) {
       return {
         ...location,
-        status: 'OCCUPIED',
+        status: isBlocked ? 'BLOCKED' : 'OCCUPIED',
+        isBlocked,
         inventoryItems: [{ ...placement, batchId: `inbound-${placement.receivedAt}` }],
         customerId: placement.customerId || null,
         lotId: placement.productCode,
@@ -25,7 +28,8 @@ export function mergeWarehouseInventory(locations, inboundPlacements, outboundLo
     if (outboundLocationSet.has(location.id)) {
       return {
         ...location,
-        status: 'AVAILABLE',
+        status: isBlocked ? 'BLOCKED' : 'AVAILABLE',
+        isBlocked,
         inventoryItems: [],
         customerId: null,
         lotId: null,
@@ -39,6 +43,6 @@ export function mergeWarehouseInventory(locations, inboundPlacements, outboundLo
       }
     }
 
-    return location
+    return isBlocked ? { ...location, status: 'BLOCKED', isBlocked: true } : location
   })
 }

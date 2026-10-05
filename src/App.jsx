@@ -26,6 +26,7 @@ const NAV_GROUPS = [
       { id: 'inbound', label: 'Nhập kho' },
       { id: 'outbound', label: 'Xuất kho' },
       { id: 'scanner', label: 'Máy quét' },
+      { id: 'putaway-log', label: 'Nhật ký Put-away (Báo cáo)' },
     ],
   },
   {
@@ -65,6 +66,30 @@ function App() {
       return []
     }
   })
+  const [blockedLocationIds, setBlockedLocationIds] = useState(() => {
+    try {
+      const savedIds = JSON.parse(localStorage.getItem('smartLocationBlockedLocationIds') || '[]')
+      return Array.isArray(savedIds) ? savedIds : []
+    } catch {
+      return []
+    }
+  })
+  const [putAwayLog, setPutAwayLog] = useState(() => {
+    try {
+      const savedLog = JSON.parse(localStorage.getItem('smartLocationPutAwayLog') || '[]')
+      return Array.isArray(savedLog) ? savedLog : []
+    } catch {
+      return []
+    }
+  })
+  const [locationDiscrepancies, setLocationDiscrepancies] = useState(() => {
+    try {
+      const savedReports = JSON.parse(localStorage.getItem('smartLocationDiscrepancies') || '[]')
+      return Array.isArray(savedReports) ? savedReports : []
+    } catch {
+      return []
+    }
+  })
   const [user, setUser] = useState(() => {
     const savedUser = localStorage.getItem('smartLocationUser')
 
@@ -78,8 +103,12 @@ function App() {
   const warehouseLocations = mergeWarehouseInventory(
     WAREHOUSE_LOCATIONS,
     inboundPlacements,
-    outboundLocationIds
+    outboundLocationIds,
+    blockedLocationIds
   )
+  const reportedMismatchLocationIds = [...new Set(
+    locationDiscrepancies.filter((report) => report.status === 'OPEN').map((report) => report.locationId)
+  )]
 
   const handleLogin = (userData) => {
     setUser(userData)
@@ -100,11 +129,13 @@ function App() {
     if (view === 'scanner') setScannerOpen(true)
   }
 
-  const handleInboundStore = (batch, locationId) => {
+  const handleInboundStore = (batch, locationId, placementContext) => {
     const target = warehouseLocations.find((location) => location.id === locationId)
     if (!target || target.status !== 'AVAILABLE') return false
 
+    const receivedAt = new Date().toISOString()
     const placement = {
+      id: `inbound-${receivedAt}`,
       locationId,
       productCode: String(batch.productCode || '').trim(),
       productName: String(batch.productName || '').trim(),
@@ -114,26 +145,104 @@ function App() {
       packageCount: 1,
       grossWeightKg: Number(batch.grossWeightKg),
       cbm: Number(batch.cbm) || null,
-      receivedAt: new Date().toISOString(),
+      receivedAt,
     }
     const nextPlacements = [...inboundPlacements, placement]
+    const logEntry = {
+      id: `putaway-${receivedAt}`,
+      receivedAt,
+      employeeName: user?.name || user?.username || 'Chưa xác định',
+      employeeUsername: user?.username || '',
+      productCode: placement.productCode,
+      productName: placement.productName,
+      suggestedLocationId: placementContext?.suggestedLocationId || '',
+      selectedLocationId: locationId,
+      followedSuggestion: placementContext?.suggestedLocationId === locationId,
+      selectionMethod: placementContext?.selectionMethod || 'RECOMMENDATION',
+    }
+    const nextLog = [...putAwayLog, logEntry]
 
     try {
-      localStorage.setItem(
-        'smartLocationInboundPlacements',
-        JSON.stringify(nextPlacements)
-      )
+      localStorage.setItem('smartLocationInboundPlacements', JSON.stringify(nextPlacements))
+      localStorage.setItem('smartLocationPutAwayLog', JSON.stringify(nextLog))
     } catch {
+      try {
+        localStorage.setItem('smartLocationInboundPlacements', JSON.stringify(inboundPlacements))
+        localStorage.setItem('smartLocationPutAwayLog', JSON.stringify(putAwayLog))
+      } catch {
+        return false
+      }
       return false
     }
 
     setInboundPlacements(nextPlacements)
+    setPutAwayLog(nextLog)
+    return true
+  }
+
+  const handleToggleLocationBlock = (locationId, shouldBlock) => {
+    const nextIds = shouldBlock
+      ? [...new Set([...blockedLocationIds, locationId])]
+      : blockedLocationIds.filter((id) => id !== locationId)
+
+    try {
+      localStorage.setItem('smartLocationBlockedLocationIds', JSON.stringify(nextIds))
+    } catch {
+      return false
+    }
+
+    setBlockedLocationIds(nextIds)
+    return true
+  }
+
+  const handleReportLocationMismatch = (locationId, batch) => {
+    const reportedAt = new Date().toISOString()
+    const report = {
+      id: `mismatch-${reportedAt}-${locationId}`,
+      locationId,
+      productCode: String(batch.productCode || ''),
+      productName: String(batch.productName || ''),
+      reportedAt,
+      employeeName: user?.name || user?.username || 'Chưa xác định',
+      employeeUsername: user?.username || '',
+      status: 'OPEN',
+    }
+    const hasOpenReport = locationDiscrepancies.some(
+      (entry) => entry.locationId === locationId && entry.status === 'OPEN'
+    )
+    const nextReports = hasOpenReport ? locationDiscrepancies : [...locationDiscrepancies, report]
+
+    try {
+      localStorage.setItem('smartLocationDiscrepancies', JSON.stringify(nextReports))
+    } catch {
+      return false
+    }
+
+    setLocationDiscrepancies(nextReports)
+    return true
+  }
+
+  const handleResolveLocationMismatch = (reportId) => {
+    const nextReports = locationDiscrepancies.map((report) =>
+      report.id === reportId
+        ? { ...report, status: 'RESOLVED', resolvedAt: new Date().toISOString() }
+        : report
+    )
+    try {
+      localStorage.setItem('smartLocationDiscrepancies', JSON.stringify(nextReports))
+    } catch {
+      return false
+    }
+
+    setLocationDiscrepancies(nextReports)
     return true
   }
 
   const handleOutboundShip = (locationId) => {
     const target = warehouseLocations.find((location) => location.id === locationId)
-    if (!target || target.status !== 'OCCUPIED') return false
+    const hasStoredGoods = target?.status === 'OCCUPIED' ||
+      (target?.status === 'BLOCKED' && (target.inventoryItems?.length || target.lotId))
+    if (!target || !hasStoredGoods) return false
 
     const isInboundPlacement = inboundPlacements.some(
       (placement) => placement.locationId === locationId
@@ -175,6 +284,9 @@ function App() {
       exportedAt: new Date().toISOString(),
       inboundPlacements,
       outboundLocationIds,
+      blockedLocationIds,
+      putAwayLog,
+      locationDiscrepancies,
     }
     const file = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' })
     const downloadUrl = URL.createObjectURL(file)
@@ -186,17 +298,24 @@ function App() {
   }
 
   const handleResetInventory = () => {
-    if (!window.confirm('Xóa mọi lượt nhập/xuất đã lưu trên trình duyệt này và khôi phục dữ liệu gốc?')) return
+    if (!window.confirm('Xóa mọi lượt nhập/xuất, nhật ký Put-away, báo cáo sai lệch và trạng thái ô lỗi trên thiết bị này?')) return
 
     localStorage.removeItem('smartLocationInboundPlacements')
     localStorage.removeItem('smartLocationOutboundLocationIds')
+    localStorage.removeItem('smartLocationBlockedLocationIds')
+    localStorage.removeItem('smartLocationPutAwayLog')
+    localStorage.removeItem('smartLocationDiscrepancies')
     setInboundPlacements([])
     setOutboundLocationIds([])
+    setBlockedLocationIds([])
+    setPutAwayLog([])
+    setLocationDiscrepancies([])
   }
 
   const totalLocations = WAREHOUSE_STATS.locations
   const occupiedLocations = warehouseLocations.filter(
-    (location) => location.status !== 'AVAILABLE'
+    (location) => location.status === 'OCCUPIED' ||
+      (location.status === 'BLOCKED' && (location.inventoryItems?.length || location.lotId))
   ).length
   const availableLocations = warehouseLocations.filter(
     (location) => location.status === 'AVAILABLE'
@@ -323,8 +442,13 @@ function App() {
             view={activeView}
             locations={warehouseLocations}
             inboundPlacements={inboundPlacements}
+            putAwayLog={putAwayLog}
+            locationDiscrepancies={locationDiscrepancies}
+            reportedMismatchLocationIds={reportedMismatchLocationIds}
             onOpenScanner={() => setScannerOpen(true)}
             onShipLocation={handleOutboundShip}
+            onToggleLocationBlock={handleToggleLocationBlock}
+            onResolveLocationMismatch={handleResolveLocationMismatch}
             onExportBackup={handleExportBackup}
             onResetInventory={handleResetInventory}
           />
@@ -335,7 +459,9 @@ function App() {
       {scannerOpen && (
         <ScannerModal
           locations={warehouseLocations}
+          reportedMismatchLocationIds={reportedMismatchLocationIds}
           onStoreBatch={handleInboundStore}
+          onReportLocationMismatch={handleReportLocationMismatch}
           onShipLocation={handleOutboundShip}
           onClose={() => setScannerOpen(false)}
         />

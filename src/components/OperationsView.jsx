@@ -7,11 +7,12 @@ const PAGE_SIZE = 25
 const formatStatus = (status) => {
   if (status === 'OCCUPIED') return 'Có hàng'
   if (status === 'AVAILABLE') return 'Trống'
+  if (status === 'BLOCKED') return 'Ô lỗi / đã khóa'
   if (status === 'MAINTENANCE' || status === 'UNDER_MAINTENANCE') return 'Bảo trì'
   return status || 'Chưa xác định'
 }
 
-function LocationTable({ locations, allowShipment, onShipLocation }) {
+function LocationTable({ locations, allowShipment, onShipLocation, onToggleLocationBlock }) {
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(1)
   const [actionMessage, setActionMessage] = useState('')
@@ -92,7 +93,7 @@ function LocationTable({ locations, allowShipment, onShipLocation }) {
                 <th>Sản phẩm</th>
                 <th>Nhà cung cấp</th>
                 <th>GW (kg)</th>
-                {allowShipment && <th>Thao tác</th>}
+                {(allowShipment || onToggleLocationBlock) && <th>Thao tác</th>}
               </tr>
             </thead>
             <tbody>
@@ -112,15 +113,34 @@ function LocationTable({ locations, allowShipment, onShipLocation }) {
                     : location.productName || '—'}</td>
                   <td>{location.customerId || '—'}</td>
                   <td>{location.grossWeightKg || '—'}</td>
-                  {allowShipment && (
+                  {(allowShipment || onToggleLocationBlock) && (
                     <td>
-                      {location.status === 'OCCUPIED' && (
+                      {(location.status === 'OCCUPIED' ||
+                        (location.status === 'BLOCKED' && (location.inventoryItems?.length || location.lotId))) && (
                         <button
                           className="operations-button operations-button--danger"
                           type="button"
                           onClick={() => handleShip(location)}
                         >
                           Xuất hàng
+                        </button>
+                      )}
+                      {onToggleLocationBlock && (
+                        <button
+                          className={`operations-button ${location.isBlocked ? 'operations-button--danger' : ''}`}
+                          type="button"
+                          onClick={() => {
+                            const shouldBlock = !location.isBlocked
+                            setActionMessage(
+                              onToggleLocationBlock(location.id, shouldBlock)
+                                ? shouldBlock
+                                  ? `Đã đánh dấu ${location.id} là ô lỗi; vị trí sẽ bị loại khỏi đề xuất.`
+                                  : `Đã mở khóa vị trí ${location.id}.`
+                                : 'Không thể cập nhật trạng thái vị trí. Hãy thử lại.'
+                            )
+                          }}
+                        >
+                          {location.isBlocked ? 'Mở khóa ô' : 'Báo ô lỗi'}
                         </button>
                       )}
                     </td>
@@ -153,12 +173,18 @@ function OperationsView({
   view,
   locations,
   inboundPlacements,
+  putAwayLog,
+  locationDiscrepancies,
+  reportedMismatchLocationIds,
   onOpenScanner,
   onShipLocation,
+  onToggleLocationBlock,
+  onResolveLocationMismatch,
   onExportBackup,
   onResetInventory,
 }) {
-  const occupied = locations.filter((location) => location.status !== 'AVAILABLE')
+  const occupied = locations.filter((location) => location.status === 'OCCUPIED' ||
+    (location.status === 'BLOCKED' && (location.inventoryItems?.length || location.lotId)))
   const availableCount = locations.filter((location) => location.status === 'AVAILABLE').length
   const occupiedCount = occupied.length
 
@@ -182,6 +208,7 @@ function OperationsView({
           locations={isOutbound ? occupied : locations}
           allowShipment={isOutbound}
           onShipLocation={onShipLocation}
+          onToggleLocationBlock={!isOutbound ? onToggleLocationBlock : undefined}
         />
       </>
     )
@@ -193,7 +220,7 @@ function OperationsView({
         <section className="operations-heading">
           <div>
             <h2>Nhập kho</h2>
-            <p>Chọn vị trí đề xuất hoặc nhập ô tùy chỉnh trong bước xác nhận cất hàng.</p>
+            <p>Quét thông tin lô để xem vị trí đề xuất và xác nhận cất hàng.</p>
           </div>
           <button className="operations-button" type="button" onClick={onOpenScanner}>
             Tạo phiếu nhập
@@ -306,6 +333,94 @@ function OperationsView({
             </table>
           </div>
         </section>
+      </>
+    )
+  }
+
+  if (view === 'putaway-log') {
+    const openDiscrepancies = locationDiscrepancies.filter((report) => report.status === 'OPEN')
+    return (
+      <>
+        <section className="operations-heading">
+          <h2>Nhật ký Put-away</h2>
+          <p>Lịch sử cất hàng, nhân viên thực hiện, vị trí AI đề xuất và vị trí thực tế được chọn.</p>
+        </section>
+        <div className="operations-summary-grid">
+          <div><span>Tổng lượt cất</span><strong>{putAwayLog.length.toLocaleString('vi-VN')}</strong></div>
+          <div><span>Theo vị trí AI tốt nhất</span><strong>{putAwayLog.filter((entry) => entry.followedSuggestion).length.toLocaleString('vi-VN')}</strong></div>
+          <div><span>Chọn vị trí khác / nhập tay</span><strong>{putAwayLog.filter((entry) => !entry.followedSuggestion).length.toLocaleString('vi-VN')}</strong></div>
+          <div><span>Sai lệch chờ kiểm kê</span><strong>{openDiscrepancies.length.toLocaleString('vi-VN')}</strong></div>
+        </div>
+        <section className="operations-panel">
+          <div className="operations-panel-heading">
+            <h3>Lịch sử cất hàng</h3>
+            <span>{putAwayLog.length} lượt</span>
+          </div>
+          {putAwayLog.length ? (
+            <div className="operations-table-wrap">
+              <table className="operations-table">
+                <thead>
+                  <tr><th>Thời gian</th><th>Nhân viên</th><th>Mã hàng</th><th>Sản phẩm</th><th>AI đề xuất</th><th>Đã cất tại</th><th>Thực hiện</th></tr>
+                </thead>
+                <tbody>
+                  {[...putAwayLog].reverse().map((entry) => (
+                    <tr key={entry.id}>
+                      <td>{entry.receivedAt ? new Date(entry.receivedAt).toLocaleString('vi-VN') : '—'}</td>
+                      <td>{entry.employeeName || entry.employeeUsername || '—'}</td>
+                      <td>{entry.productCode || '—'}</td>
+                      <td>{entry.productName || '—'}</td>
+                      <td>{entry.suggestedLocationId || '—'}</td>
+                      <td><strong>{entry.selectedLocationId || '—'}</strong></td>
+                      <td>{entry.selectionMethod === 'MANUAL' ? 'Nhập tay' : entry.followedSuggestion ? 'Theo AI' : 'Chọn vị trí khác'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="operations-empty">Chưa có lịch sử Put-away trên thiết bị này.</div>
+          )}
+        </section>
+        <section className="operations-panel">
+          <div className="operations-panel-heading">
+            <h3>Sai lệch vị trí cần kiểm kê</h3>
+            <span>{openDiscrepancies.length} chưa xử lý</span>
+          </div>
+          {locationDiscrepancies.length ? (
+            <div className="operations-table-wrap">
+              <table className="operations-table">
+                <thead><tr><th>Thời gian báo</th><th>Nhân viên</th><th>Vị trí sai lệch</th><th>Mã hàng lô nhập</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
+                <tbody>
+                  {[...locationDiscrepancies].reverse().map((report) => (
+                    <tr key={report.id}>
+                      <td>{report.reportedAt ? new Date(report.reportedAt).toLocaleString('vi-VN') : '—'}</td>
+                      <td>{report.employeeName || '—'}</td>
+                      <td><strong>{report.locationId}</strong></td>
+                      <td>{report.productCode || '—'}</td>
+                      <td>{report.status === 'OPEN' ? 'Chờ kiểm kê' : 'Đã xử lý'}</td>
+                      <td>{report.status === 'OPEN' && (
+                        <button
+                          className="operations-button"
+                          type="button"
+                          onClick={() => onResolveLocationMismatch(report.id)}
+                        >
+                          Đánh dấu đã kiểm kê
+                        </button>
+                      )}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="operations-empty">Chưa có báo cáo sai lệch vị trí.</div>
+          )}
+        </section>
+        {reportedMismatchLocationIds.length > 0 && (
+          <p className="operations-message" role="status">
+            Vị trí đang chờ kiểm kê tạm thời bị loại khỏi danh sách đề xuất.
+          </p>
+        )}
       </>
     )
   }

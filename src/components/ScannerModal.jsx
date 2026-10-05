@@ -84,7 +84,36 @@ function median(values) {
   return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2
 }
 
-function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
+function normalizeSlotId(value) {
+  return String(value || '').trim().toUpperCase().replace(/\s/g, '')
+}
+
+function getBatchSizeError(batch) {
+  const dimensions = [Number(batch.heightCm), Number(batch.widthCm), Number(batch.depthCm)]
+  if (!dimensions.every((dimension) => Number.isFinite(dimension) && dimension > 0)) {
+    return 'Cần nhập đủ kích thước kiện hàng trước khi cất.'
+  }
+
+  const packageDimensions = dimensions.sort((left, right) => right - left)
+  const slotDimensions = [90, 80, 80]
+  if (!packageDimensions.every((dimension, index) => dimension <= slotDimensions[index])) {
+    return 'Kiện hàng vượt kích thước ô tiêu chuẩn 90 × 80 × 80 cm.'
+  }
+
+  if (!fitsStorageSlot(batch)) {
+    return 'Thông số hoặc tải trọng kiện hàng không phù hợp với ô lưu trữ.'
+  }
+  return ''
+}
+
+function ScannerModal({
+  onClose,
+  locations,
+  onStoreBatch,
+  onReportLocationMismatch,
+  onShipLocation,
+  reportedMismatchLocationIds = [],
+}) {
   const videoRef = useRef(null)
   const controlsRef = useRef(null)
   const [scanValue, setScanValue] = useState('')
@@ -92,8 +121,10 @@ function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
   const [batchDetails, setBatchDetails] = useState(null)
   const [selectedSampleId, setSelectedSampleId] = useState('')
   const [recommendations, setRecommendations] = useState([])
+  const [selectedRecommendationId, setSelectedRecommendationId] = useState('')
+  const [manualLocationId, setManualLocationId] = useState('')
+  const [selectionMethod, setSelectionMethod] = useState('RECOMMENDATION')
   const [batchHint, setBatchHint] = useState('')
-  const [customLocationId, setCustomLocationId] = useState('')
   const [storeMessage, setStoreMessage] = useState('')
   const [cameraRunning, setCameraRunning] = useState(false)
   const [error, setError] = useState('')
@@ -102,6 +133,26 @@ function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
 
   const topRecommendation = recommendations[0] || null
   const recommendationPreview = recommendations.slice(0, 4)
+  const selectedRecommendation = recommendationPreview.find(
+    (recommendation) => recommendation.location.id === selectedRecommendationId
+  ) || topRecommendation
+  const selectedIsBest = selectedRecommendation?.location.id === topRecommendation?.location.id
+  const selectedLocationId = selectionMethod === 'MANUAL'
+    ? normalizeSlotId(manualLocationId)
+    : selectedRecommendation?.location.id || ''
+  const selectedLocation = locations.find((location) => location.id === selectedLocationId)
+  const manualTarget = locations.find((location) => location.id === normalizeSlotId(manualLocationId))
+  const manualPlacementError = !manualLocationId.trim()
+    ? ''
+    : !manualTarget
+      ? 'Không tìm thấy mã vị trí này trong kho.'
+      : manualTarget.status === 'BLOCKED' || manualTarget.isBlocked
+        ? 'Ô đang bị khóa do lỗi/bảo trì và không thể cất hàng.'
+        : manualTarget.status === 'MAINTENANCE' || manualTarget.status === 'UNDER_MAINTENANCE'
+          ? 'Ô đang bảo trì và không thể cất hàng.'
+        : manualTarget.status !== 'AVAILABLE'
+          ? 'Ô đã đầy hoặc không còn sức chứa.'
+          : getBatchSizeError(batchDetails || {})
 
   const stopCamera = () => {
     controlsRef.current?.stop()
@@ -114,6 +165,8 @@ function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
   const searchCode = (value) => {
     setStoreMessage('')
     setSelectedSampleId('')
+    setManualLocationId('')
+    setSelectionMethod('RECOMMENDATION')
     const raw = String(value || '').trim()
     if (!raw) {
       setError('Nhập mã hàng hoặc mã vị trí để tra cứu.')
@@ -131,6 +184,8 @@ function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
       setMatches([exactLocation])
       setBatchDetails(null)
       setRecommendations([])
+      setSelectedRecommendationId('')
+      setManualLocationId('')
       setBatchHint('')
       setError('')
       return
@@ -160,6 +215,14 @@ function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
     setMatches(productMatches)
     setError('')
     setRecommendations([])
+    setSelectedRecommendationId('')
+
+    if (productMatches.length > 0) {
+      setBatchDetails(null)
+      setBatchHint('')
+      setShowScanResultPopup(false)
+      return
+    }
 
     const matchedBatches = productMatches.flatMap((location) => location.matchedItems)
     const reference = matchedBatches[0]
@@ -174,6 +237,7 @@ function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
     }
 
     setBatchDetails(nextBatchDetails)
+    setShowScanResultPopup(false)
     setBatchHint(
       productMatches.length
         ? 'Thông số GW và CBM được tham chiếu từ các vị trí đang lưu mặt hàng này.'
@@ -183,8 +247,10 @@ function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
   }
 
   const applyRecommendations = (nextBatchDetails, overrideMessage = '') => {
-    const results = recommendStorageSlots(nextBatchDetails, locations, 4)
+    const results = recommendStorageSlots(nextBatchDetails, locations, 4, reportedMismatchLocationIds)
     setRecommendations(results)
+    setSelectedRecommendationId(results[0]?.location.id || '')
+    setSelectionMethod('RECOMMENDATION')
     setShowScanResultPopup(true)
     setStoreMessage('')
     setError(results.length ? '' : overrideMessage || 'Không có ô trống phù hợp với kích thước hoặc tải trọng của lô hàng.')
@@ -201,6 +267,9 @@ function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
     setStoreMessage('')
     setBatchDetails((current) => ({ ...current, [name]: value }))
     setRecommendations([])
+    setSelectedRecommendationId('')
+    setSelectionMethod('RECOMMENDATION')
+    setError('')
   }
 
   const handleSampleSelect = (event) => {
@@ -214,7 +283,8 @@ function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
     setBatchDetails(nextSample)
     setBatchHint('Lô mẫu dùng để thử đề xuất; kích thước kiện là số liệu giả lập.')
     setRecommendations([])
-    setCustomLocationId('')
+    setManualLocationId('')
+    setSelectionMethod('RECOMMENDATION')
     setStoreMessage('')
     setError('')
     applyRecommendations(nextSample)
@@ -234,6 +304,61 @@ function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
     runRecommendation()
   }
 
+  const handleStoreSelectedRecommendation = () => {
+    if (!batchDetails || !selectedLocationId) return
+
+    const batchSizeError = getBatchSizeError(batchDetails)
+    if (batchSizeError) {
+      setError(batchSizeError)
+      return
+    }
+
+    if (!selectedLocation || selectedLocation.status !== 'AVAILABLE' || selectedLocation.isBlocked) {
+      setError(selectedLocation?.isBlocked || selectedLocation?.status === 'BLOCKED'
+        ? 'Ô đang bị khóa do lỗi/bảo trì và không thể cất hàng.'
+        : 'Ô đã đầy hoặc không còn sức chứa. Hãy chọn vị trí khác.')
+      return
+    }
+
+    const locationId = selectedLocation.id
+    if (!window.confirm(`Xác nhận cất ${batchDetails.productName || batchDetails.productCode} vào vị trí ${locationId}?`)) return
+
+    if (!onStoreBatch(batchDetails, locationId, {
+      suggestedLocationId: topRecommendation?.location.id || '',
+      selectionMethod,
+    })) {
+      setError('Không thể cất hàng vào vị trí này. Hãy kiểm tra lại trạng thái ô.')
+      return
+    }
+
+    setError('')
+    setStoreMessage(`Đã cất ${batchDetails.productName || batchDetails.productCode} vào ${locationId}.`)
+    setBatchDetails(null)
+    setRecommendations([])
+    setSelectedRecommendationId('')
+    setSelectedSampleId('')
+    setShowScanResultPopup(false)
+  }
+
+  const handleReportLocationMismatch = () => {
+    if (!selectedRecommendation || !batchDetails) return
+    const locationId = selectedRecommendation.location.id
+    if (!window.confirm(`Ghi nhận ${locationId} đang có hàng thực tế và đề xuất một vị trí khác?`)) return
+
+    if (!onReportLocationMismatch(locationId, batchDetails)) {
+      setError('Không thể lưu báo cáo sai lệch. Hãy thử lại.')
+      return
+    }
+
+    const excludedLocationIds = [...new Set([...reportedMismatchLocationIds, locationId])]
+    const results = recommendStorageSlots(batchDetails, locations, 4, excludedLocationIds)
+    setRecommendations(results)
+    setSelectedRecommendationId(results[0]?.location.id || '')
+    setSelectionMethod('RECOMMENDATION')
+    setError(results.length ? '' : 'Đã ghi nhận sai lệch, nhưng hiện không còn vị trí phù hợp khác.')
+    setStoreMessage(`Đã ghi nhận ${locationId} cần kiểm kê và loại vị trí này khỏi đề xuất.`)
+  }
+
   const handleShipLocation = (location) => {
     const items = location.inventoryItems || []
     const description = items.length > 1
@@ -250,36 +375,6 @@ function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
     setRecommendations([])
     setError('')
     setStoreMessage(`Đã xuất hàng khỏi vị trí ${location.id}.`)
-  }
-
-  const storeBatchAt = (rawLocationId) => {
-    const locationId = String(rawLocationId || '').trim().toUpperCase().replace(/\s/g, '')
-    const target = locations.find((location) => location.id === locationId)
-
-    if (!batchDetails || !fitsStorageSlot(batchDetails)) {
-      setError('Thông số lô hàng chưa hợp lệ để nhập kho.')
-      return
-    }
-    if (!target) {
-      setError('Không tìm thấy mã vị trí trong kho.')
-      return
-    }
-    if (target.status !== 'AVAILABLE') {
-      setError('Vị trí này đã có hàng hoặc không thể sử dụng.')
-      return
-    }
-    if (!onStoreBatch(batchDetails, locationId)) {
-      setError('Không thể lưu lần nhập hàng này. Hãy thử lại.')
-      return
-    }
-
-    setError('')
-    setStoreMessage(`Đã cất ${batchDetails.productName || batchDetails.productCode} vào ${locationId}.`)
-    setBatchDetails(null)
-    setMatches([])
-    setRecommendations([])
-    setCustomLocationId('')
-    setSelectedSampleId('')
   }
 
   const startCamera = async () => {
@@ -336,6 +431,7 @@ function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
     if (status === 'OCCUPIED') return 'Có hàng'
     if (status === 'MAINTENANCE' || status === 'UNDER_MAINTENANCE') return 'Bảo trì'
     if (status === 'AVAILABLE') return 'Trống'
+    if (status === 'BLOCKED') return 'Ô lỗi / đã khóa'
     return status || 'Chưa xác định'
   }
 
@@ -367,25 +463,34 @@ function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
                   </div>
                 </div>
 
-                {topRecommendation ? (
+                {selectionMethod === 'MANUAL' && selectedLocation ? (
                   <div className="scanner-result-slot">
                     <div className="scanner-result-slot-header">
-                      <span className="scanner-result-badge scanner-result-badge--best">Đề xuất tốt nhất</span>
-                      <strong>{topRecommendation.location.id}</strong>
+                      <span className="scanner-result-badge scanner-result-badge--best">Vị trí nhập tay</span>
+                      <strong>{selectedLocation.id}</strong>
                     </div>
-                    <p className="scanner-result-score">{topRecommendation.score} điểm phù hợp</p>
+                    <p className="scanner-result-note">Đã kiểm tra: ô trống, không bị khóa và phù hợp kích thước kiện.</p>
+                  </div>
+                ) : topRecommendation ? (
+                  <div className="scanner-result-slot">
+                    <div className="scanner-result-slot-header">
+                      <span className="scanner-result-badge scanner-result-badge--best">
+                        {selectedIsBest ? 'Đề xuất tốt nhất' : 'Vị trí đang chọn'}
+                      </span>
+                      <strong>{selectedRecommendation.location.id}</strong>
+                    </div>
+                    <p className="scanner-result-score">{selectedRecommendation.score} điểm phù hợp</p>
                     <dl className="scanner-result-factor-grid">
-                      <div><dt>An toàn</dt><dd>{topRecommendation.factors.safety}</dd></div>
-                      <div><dt>Di chuyển</dt><dd>{topRecommendation.factors.travel}</dd></div>
-                      <div><dt>Tải trọng</dt><dd>{topRecommendation.factors.weightLevel}</dd></div>
-                      <div><dt>Nhóm</dt><dd>{topRecommendation.factors.group}</dd></div>
+                      <div><dt>An toàn</dt><dd>{selectedRecommendation.factors.safety}</dd></div>
+                      <div><dt>Di chuyển</dt><dd>{selectedRecommendation.factors.travel}</dd></div>
+                      <div><dt>Tải trọng</dt><dd>{selectedRecommendation.factors.weightLevel}</dd></div>
+                      <div><dt>Nhóm</dt><dd>{selectedRecommendation.factors.group}</dd></div>
                     </dl>
-                    <p className="scanner-result-note">Tầng {topRecommendation.location.level} · Khu {topRecommendation.location.zone}</p>
+                    <p className="scanner-result-note">Tầng {selectedRecommendation.location.level} · Khu {selectedRecommendation.location.zone}</p>
                   </div>
                 ) : (
                   <div className="scanner-result-empty">Chưa có đề xuất. Bấm nút bên dưới để tính toán vị trí phù hợp.</div>
                 )}
-
                 {recommendationPreview.length > 0 && (
                   <div className="scanner-result-recommendations">
                     <div className="scanner-result-recommendations-header">
@@ -393,9 +498,16 @@ function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
                     </div>
                     <div className="scanner-result-recommendation-list">
                       {recommendationPreview.map((recommendation, index) => (
-                        <div
+                        <button
                           key={recommendation.location.id}
-                          className={`scanner-result-slot-item ${index === 0 ? 'scanner-result-slot-item--best' : ''}`}
+                          className={`scanner-result-slot-item ${index === 0 ? 'scanner-result-slot-item--best' : ''} ${recommendation.location.id === selectedRecommendation?.location.id ? 'scanner-result-slot-item--selected' : ''}`}
+                          type="button"
+                          aria-pressed={recommendation.location.id === selectedRecommendation?.location.id}
+                          onClick={() => {
+                            setSelectedRecommendationId(recommendation.location.id)
+                            setSelectionMethod('RECOMMENDATION')
+                            setError('')
+                          }}
                         >
                           <div className="scanner-result-slot-item__top">
                             <span>{index === 0 ? 'Ưu tiên' : `Lựa chọn ${index + 1}`}</span>
@@ -405,16 +517,80 @@ function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
                             <span>{recommendation.score} điểm</span>
                             <span>Tầng {recommendation.location.level}</span>
                           </div>
-                        </div>
+                        </button>
                       ))}
                     </div>
                   </div>
                 )}
+                {selectionMethod === 'RECOMMENDATION' && selectedRecommendation && (
+                  <button type="button" className="scanner-result-mismatch-button" onClick={handleReportLocationMismatch}>
+                    Đổi vị trí khác · ô này đã có hàng
+                  </button>
+                )}
+
+                <div className="scanner-manual-placement">
+                  <label htmlFor="scanner-popup-manual-location">Hoặc nhập một vị trí khác</label>
+                  <div className="scanner-input-row">
+                    <input
+                      id="scanner-popup-manual-location"
+                      value={manualLocationId}
+                      onChange={(event) => {
+                        setManualLocationId(event.target.value)
+                        setSelectionMethod('MANUAL')
+                        setError('')
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault()
+                          setSelectionMethod('MANUAL')
+                        }
+                      }}
+                      placeholder="VD: 101-01-1A"
+                      autoComplete="off"
+                      aria-invalid={Boolean(manualPlacementError)}
+                      aria-describedby="scanner-manual-location-alert"
+                    />
+                    <button
+                      type="button"
+                      disabled={!manualLocationId.trim() || Boolean(manualPlacementError)}
+                      onClick={() => {
+                        setSelectionMethod('MANUAL')
+                        setError('')
+                      }}
+                    >
+                      Chọn ô này
+                    </button>
+                  </div>
+                  {manualPlacementError && (
+                    <p className="scanner-error" id="scanner-manual-location-alert" role="alert">
+                      {manualPlacementError}
+                    </p>
+                  )}
+                </div>
+
+                {error && <p className="scanner-error" role="alert">{error}</p>}
+                {storeMessage && <p className="scanner-success" role="status">{storeMessage}</p>}
 
                 <div className="scanner-result-actions">
-                  <button type="button" className="scanner-result-primary" onClick={runRecommendation}>
-                    {recommendations.length ? 'Cập nhật đề xuất' : 'Đề xuất vị trí'}
-                  </button>
+                  {selectedLocationId ? (
+                    <button
+                      type="button"
+                      className="scanner-result-primary"
+                      disabled={
+                        !selectedLocation ||
+                        selectedLocation.status !== 'AVAILABLE' ||
+                        selectedLocation.isBlocked ||
+                        (selectionMethod === 'MANUAL' && Boolean(manualPlacementError))
+                      }
+                      onClick={handleStoreSelectedRecommendation}
+                    >
+                      Cất hàng vào {selectedLocationId}
+                    </button>
+                  ) : (
+                    <button type="button" className="scanner-result-primary" onClick={runRecommendation}>
+                      Đề xuất vị trí
+                    </button>
+                  )}
                   <button type="button" className="scanner-result-back-button" onClick={() => setShowScanResultPopup(false)}>
                     Quay lại
                   </button>
@@ -427,7 +603,7 @@ function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
               <div className="scanner-result-map-panel">
                 <div className="scanner-result-map-header">
                   <h3>Bản đồ kho</h3>
-                  <span>{topRecommendation ? 'Ô sáng neon là đề xuất ưu tiên' : 'Đang xem toàn cảnh kho'}</span>
+                  <span>{selectedLocation ? `Đang chọn ô ${selectedLocation.id}` : 'Đang xem toàn cảnh kho'}</span>
                 </div>
 
                 <div className="scanner-result-map">
@@ -437,7 +613,7 @@ function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
                     showLegend={false}
                     disableFrameSelection
                     highlightFrameIds={
-                      topRecommendation ? [`${topRecommendation.location.row}-${topRecommendation.location.frame}`] : []
+                      selectedLocation ? [`${selectedLocation.row}-${selectedLocation.frame}`] : []
                     }
                   />
                 </div>
@@ -465,6 +641,11 @@ function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
                 <div className="scanner-camera-placeholder">
                   <span className="scanner-camera-mark" aria-hidden="true">⌗</span>
                   <span>Camera chưa bật</span>
+                </div>
+              )}
+              {cameraRunning && (
+                <div className="scanner-target-overlay" aria-hidden="true">
+                  <span className="scanner-target-crosshair" />
                 </div>
               )}
             </div>
@@ -547,21 +728,6 @@ function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
                 </div>
                 <button className="scanner-recommend-button" type="submit">Đề xuất vị trí</button>
                 <p className="scanner-assumption">Tạm tính lối nhập gần dãy 101; lịch sử di chuyển chưa có nên tiêu chí này dùng điểm trung tính.</p>
-                <div className="scanner-custom-placement">
-                  <label htmlFor="scanner-custom-location">Hoặc nhập mã ô muốn cất</label>
-                  <div className="scanner-input-row">
-                    <input
-                      id="scanner-custom-location"
-                      value={customLocationId}
-                      onChange={(event) => setCustomLocationId(event.target.value)}
-                      placeholder="VD: 101-01-1A"
-                      autoComplete="off"
-                    />
-                    <button type="button" onClick={() => storeBatchAt(customLocationId)}>
-                      Cất vào ô
-                    </button>
-                  </div>
-                </div>
               </form>
             )}
 
@@ -590,7 +756,8 @@ function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
                         </dl>
                       </div>
                     ))}
-                    {location.status === 'OCCUPIED' && (
+                    {(location.status === 'OCCUPIED' ||
+                      (location.status === 'BLOCKED' && (location.inventoryItems?.length || location.lotId))) && (
                       <button
                         className="scanner-outbound-button"
                         type="button"
@@ -607,37 +774,6 @@ function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
               !batchDetails && !error && <p className="scanner-empty">Kết quả tra cứu sẽ hiển thị tại đây.</p>
             )}
 
-            {recommendations.length > 0 && (
-              <section className="scanner-recommendations" aria-live="polite">
-                <div className="scanner-match-heading">
-                  <h3>5 vị trí đề xuất</h3>
-                  <span>Chỉ đề xuất, chưa giữ chỗ</span>
-                </div>
-                {recommendations.map((recommendation, index) => (
-                  <article className={`scanner-recommendation ${index === 0 ? 'scanner-recommendation--best' : ''}`} key={recommendation.location.id}>
-                    <div className="scanner-match-title">
-                      <strong>{index === 0 ? 'Phù hợp nhất · ' : ''}{recommendation.location.id}</strong>
-                      <span className="scanner-recommendation-score">{recommendation.score} điểm</span>
-                    </div>
-                    <p>Tầng {recommendation.location.level} · Khu {recommendation.location.zone}</p>
-                    <div className="scanner-score-breakdown">
-                      <span>An toàn {recommendation.factors.safety} × 35%</span>
-                      <span>Di chuyển {recommendation.factors.travel} × 25%</span>
-                      <span>Tải trọng {recommendation.factors.weightLevel} × 20%</span>
-                      <span>Nhóm hàng {recommendation.factors.group} × 15%</span>
-                      <span>Lịch sử {recommendation.factors.movementHistory} × 5%</span>
-                    </div>
-                    <button
-                      className="scanner-place-button"
-                      type="button"
-                      onClick={() => storeBatchAt(recommendation.location.id)}
-                    >
-                      Cất hàng vào ô này
-                    </button>
-                  </article>
-                ))}
-              </section>
-            )}
           </div>
         </div>
       </section>
