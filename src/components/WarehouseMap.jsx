@@ -117,7 +117,14 @@ const getStatusLabel = (status) => {
   return 'Trống'
 }
 
-function WarehouseMap({ locations, onShipLocation }) {
+function WarehouseMap({
+  locations,
+  onShipLocation,
+  highlightFrameIds = [],
+  compactMode = false,
+  showLegend = true,
+  disableFrameSelection = false,
+}) {
   const [selectedFrame, setSelectedFrame] = useState(null)
   const [warehouseRoutes, setWarehouseRoutes] = useState(null)
   const mapInnerRef = useRef(null)
@@ -156,6 +163,7 @@ function WarehouseMap({ locations, onShipLocation }) {
 
   const renderFrame = (frame) => {
     const frameId = `${frame.row}-${frame.frame}`
+    const isHighlighted = highlightFrameIds.includes(frameId)
 
     if (isFrameRemoved(frame.row, frame.frame)) {
       const dockDoors = frame.row === 104 ? DOCK_DOORS_BY_FRAME.get(frame.frame) : null
@@ -207,9 +215,11 @@ function WarehouseMap({ locations, onShipLocation }) {
     return (
       <button
         key={frameId}
-        className={`frame-box frame-box--${getStatusStyle(status)}`}
-        onClick={() => setSelectedFrame(frame)}
+        type="button"
+        className={`frame-box frame-box--${getStatusStyle(status)} ${isHighlighted ? 'frame-box--highlighted' : ''}`}
+        onClick={disableFrameSelection ? undefined : () => setSelectedFrame(frame)}
         title={`${frame.row}-${String(frame.frame).padStart(2, '0')} · ${getStatusLabel(status)}`}
+        disabled={disableFrameSelection}
       >
         {String(frame.frame).padStart(2, '0')}
       </button>
@@ -217,34 +227,36 @@ function WarehouseMap({ locations, onShipLocation }) {
   }
 
   return (
-    <div className="real-warehouse-map">
+    <div className={`real-warehouse-map ${compactMode ? 'real-warehouse-map--compact' : ''}`}>
 
-      <div className="map-heading">
+      <div className={`map-heading ${compactMode ? 'map-heading--compact' : ''}`}>
         <div>
           <h2>U&I Warehouse 6</h2>
         </div>
 
-        <div className="map-legend">
-          <span>
-            <i className="legend-box available"></i>
-            Trống
-          </span>
+        {showLegend && (
+          <div className="map-legend">
+            <span>
+              <i className="legend-box available"></i>
+              Trống
+            </span>
 
-          <span>
-            <i className="legend-box occupied"></i>
-            Đầy 18/18
-          </span>
+            <span>
+              <i className="legend-box occupied"></i>
+              Đầy 18/18
+            </span>
 
-          <span>
-            <i className="legend-box partial"></i>
-            Có hàng, chưa đầy
-          </span>
+            <span>
+              <i className="legend-box partial"></i>
+              Có hàng, chưa đầy
+            </span>
 
-          <span>
-            <i className="legend-box maintenance"></i>
-            Bảo trì
-          </span>
-        </div>
+            <span>
+              <i className="legend-box maintenance"></i>
+              Bảo trì
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="map-scroll">

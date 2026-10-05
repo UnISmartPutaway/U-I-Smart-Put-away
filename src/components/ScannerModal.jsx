@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { BrowserMultiFormatReader } from '@zxing/browser'
+import WarehouseMap from './WarehouseMap'
 import { getLocalFrameNumber } from '../data/warehouseConfig'
 import { fitsStorageSlot, recommendStorageSlots } from '../data/recommendationEngine'
 import { SAMPLE_INBOUND_BATCHES } from '../data/sampleInboundBatches'
@@ -97,6 +98,10 @@ function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
   const [cameraRunning, setCameraRunning] = useState(false)
   const [error, setError] = useState('')
   const [cameraError, setCameraError] = useState('')
+  const [showScanResultPopup, setShowScanResultPopup] = useState(false)
+
+  const topRecommendation = recommendations[0] || null
+  const recommendationPreview = recommendations.slice(0, 4)
 
   const stopCamera = () => {
     controlsRef.current?.stop()
@@ -135,6 +140,7 @@ function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
     if (!productCode) {
       setMatches([])
       setBatchDetails(null)
+      setShowScanResultPopup(false)
       setError('Không tìm thấy vị trí khớp với mã vừa quét.')
       return
     }
@@ -157,7 +163,7 @@ function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
 
     const matchedBatches = productMatches.flatMap((location) => location.matchedItems)
     const reference = matchedBatches[0]
-    setBatchDetails({
+    const nextBatchDetails = {
       productCode: scanData.productCode,
       productName: scanData.productName || reference?.productName || '',
       grossWeightKg: scanData.grossWeightKg || median(matchedBatches.map((item) => item.grossWeightKg)),
@@ -165,12 +171,23 @@ function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
       widthCm: scanData.widthCm || '',
       depthCm: scanData.depthCm || '',
       cbm: scanData.cbm || median(matchedBatches.map((item) => item.cbm)),
-    })
+    }
+
+    setBatchDetails(nextBatchDetails)
     setBatchHint(
       productMatches.length
         ? 'Thông số GW và CBM được tham chiếu từ các vị trí đang lưu mặt hàng này.'
         : 'Mã mới chưa có dữ liệu lịch sử. Nhập thông số lô để nhận đề xuất.'
     )
+    applyRecommendations(nextBatchDetails)
+  }
+
+  const applyRecommendations = (nextBatchDetails, overrideMessage = '') => {
+    const results = recommendStorageSlots(nextBatchDetails, locations, 4)
+    setRecommendations(results)
+    setShowScanResultPopup(true)
+    setStoreMessage('')
+    setError(results.length ? '' : overrideMessage || 'Không có ô trống phù hợp với kích thước hoặc tải trọng của lô hàng.')
   }
 
   const handleSubmit = (event) => {
@@ -191,22 +208,30 @@ function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
     setSelectedSampleId(event.target.value)
     if (!sample) return
 
+    const nextSample = { ...sample }
     setScanValue(sample.productCode)
     setMatches([])
-    setBatchDetails({ ...sample })
+    setBatchDetails(nextSample)
     setBatchHint('Lô mẫu dùng để thử đề xuất; kích thước kiện là số liệu giả lập.')
     setRecommendations([])
     setCustomLocationId('')
     setStoreMessage('')
     setError('')
+    applyRecommendations(nextSample)
+  }
+
+  const runRecommendation = () => {
+    if (!batchDetails) {
+      setError('Chưa có thông tin lô hàng để đề xuất vị trí.')
+      return
+    }
+
+    applyRecommendations(batchDetails)
   }
 
   const handleRecommend = (event) => {
-    event.preventDefault()
-    const results = recommendStorageSlots(batchDetails, locations, 5)
-    setRecommendations(results)
-    setStoreMessage('')
-    setError(results.length ? '' : 'Không có ô trống phù hợp với kích thước hoặc tải trọng của lô hàng.')
+    event?.preventDefault?.()
+    runRecommendation()
   }
 
   const handleShipLocation = (location) => {
@@ -316,6 +341,112 @@ function ScannerModal({ onClose, locations, onStoreBatch, onShipLocation }) {
 
   return (
     <div className="scanner-overlay" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      {showScanResultPopup && batchDetails && (
+        <div
+          className="scanner-result-overlay"
+          onMouseDown={(event) => event.target === event.currentTarget && setShowScanResultPopup(false)}
+        >
+          <div className="scanner-result-popup" role="dialog" aria-modal="true" aria-labelledby="scan-result-title">
+            <header className="scanner-result-header">
+              <div>
+                <p className="scanner-eyebrow">KẾT QUẢ QUÉT</p>
+                <h2 id="scan-result-title">Vị trí đề xuất cho lô hàng</h2>
+              </div>
+              <button className="modal-close-button" onClick={() => setShowScanResultPopup(false)} aria-label="Đóng popup đề xuất">×</button>
+            </header>
+
+            <div className="scanner-result-grid">
+              <div className="scanner-result-card">
+                <div className="scanner-result-summary">
+                  <span className="scanner-result-badge">Mặt hàng vừa quét</span>
+                  <h3>{batchDetails.productName || batchDetails.productCode || 'Mã hàng chưa xác định'}</h3>
+                  <div className="scanner-result-meta">
+                    <span>Mã hàng: {batchDetails.productCode || 'Chưa có'}</span>
+                    <span>GW: {batchDetails.grossWeightKg || '—'} kg</span>
+                    <span>CBM: {batchDetails.cbm || '—'} m³</span>
+                  </div>
+                </div>
+
+                {topRecommendation ? (
+                  <div className="scanner-result-slot">
+                    <div className="scanner-result-slot-header">
+                      <span className="scanner-result-badge scanner-result-badge--best">Đề xuất tốt nhất</span>
+                      <strong>{topRecommendation.location.id}</strong>
+                    </div>
+                    <p className="scanner-result-score">{topRecommendation.score} điểm phù hợp</p>
+                    <dl className="scanner-result-factor-grid">
+                      <div><dt>An toàn</dt><dd>{topRecommendation.factors.safety}</dd></div>
+                      <div><dt>Di chuyển</dt><dd>{topRecommendation.factors.travel}</dd></div>
+                      <div><dt>Tải trọng</dt><dd>{topRecommendation.factors.weightLevel}</dd></div>
+                      <div><dt>Nhóm</dt><dd>{topRecommendation.factors.group}</dd></div>
+                    </dl>
+                    <p className="scanner-result-note">Tầng {topRecommendation.location.level} · Khu {topRecommendation.location.zone}</p>
+                  </div>
+                ) : (
+                  <div className="scanner-result-empty">Chưa có đề xuất. Bấm nút bên dưới để tính toán vị trí phù hợp.</div>
+                )}
+
+                {recommendationPreview.length > 0 && (
+                  <div className="scanner-result-recommendations">
+                    <div className="scanner-result-recommendations-header">
+                      <h4>Top 4 vị trí đề xuất</h4>
+                    </div>
+                    <div className="scanner-result-recommendation-list">
+                      {recommendationPreview.map((recommendation, index) => (
+                        <div
+                          key={recommendation.location.id}
+                          className={`scanner-result-slot-item ${index === 0 ? 'scanner-result-slot-item--best' : ''}`}
+                        >
+                          <div className="scanner-result-slot-item__top">
+                            <span>{index === 0 ? 'Ưu tiên' : `Lựa chọn ${index + 1}`}</span>
+                            <strong>{recommendation.location.id}</strong>
+                          </div>
+                          <div className="scanner-result-slot-item__meta">
+                            <span>{recommendation.score} điểm</span>
+                            <span>Tầng {recommendation.location.level}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="scanner-result-actions">
+                  <button type="button" className="scanner-result-primary" onClick={runRecommendation}>
+                    {recommendations.length ? 'Cập nhật đề xuất' : 'Đề xuất vị trí'}
+                  </button>
+                  <button type="button" className="scanner-result-back-button" onClick={() => setShowScanResultPopup(false)}>
+                    Quay lại
+                  </button>
+                  <button type="button" className="scanner-result-secondary" onClick={() => setShowScanResultPopup(false)}>
+                    Đóng
+                  </button>
+                </div>
+              </div>
+
+              <div className="scanner-result-map-panel">
+                <div className="scanner-result-map-header">
+                  <h3>Bản đồ kho</h3>
+                  <span>{topRecommendation ? 'Ô sáng neon là đề xuất ưu tiên' : 'Đang xem toàn cảnh kho'}</span>
+                </div>
+
+                <div className="scanner-result-map">
+                  <WarehouseMap
+                    locations={locations}
+                    compactMode
+                    showLegend={false}
+                    disableFrameSelection
+                    highlightFrameIds={
+                      topRecommendation ? [`${topRecommendation.location.row}-${topRecommendation.location.frame}`] : []
+                    }
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <section className="scanner-modal" role="dialog" aria-modal="true" aria-labelledby="scanner-title">
         <header className="scanner-header">
           <div>
