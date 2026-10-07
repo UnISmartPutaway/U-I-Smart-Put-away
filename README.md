@@ -7,22 +7,57 @@ npm install
 npm run dev
 ```
 
-## Tài khoản mô phỏng
+Khi chưa cấu hình Supabase, ứng dụng chạy ở chế độ demo cũ: tài khoản `admin`, `mover`, `lifter` (mật khẩu mặc định `123456`), với dữ liệu lưu trong trình duyệt. Chế độ này không đồng bộ đa thiết bị.
 
-Mật khẩu ban đầu của các tài khoản là `123456`; người dùng có thể đổi trong mục Cài đặt. Mật khẩu đã đổi được lưu dưới dạng PBKDF2 hash trong localStorage của trình duyệt này.
+## Bật đồng bộ Put-away đa thiết bị bằng Supabase
 
-- `admin`: kiểm hàng, quét lô, chọn ô và tạo lệnh put-away.
-- `mover`: xem lô đang chờ, chuyển hàng đến ô chỉ định và xác nhận hoàn tất bước nâng chuyển.
-- `lifter`: xem lô đang chờ nâng hạ, cất hàng lên kệ và xác nhận hoàn tất.
+### 1. Tạo backend
 
-Đây là đăng nhập demo phía giao diện, không dùng cho triển khai thực tế. Mỗi trình duyệt lưu tài khoản riêng, chưa có xác thực hoặc đồng bộ mật khẩu phía máy chủ.
+1. Tạo một project Supabase.
+2. Trong **Project Settings → API**, lấy Project URL và publishable/anon key. Không dùng `service_role` key trong ứng dụng trình duyệt.
+3. Tạo file `.env.local` trong thư mục dự án theo mẫu `.env.example`, điền URL và key.
+4. Mở **SQL Editor** trên Supabase và chạy toàn bộ [`supabase/schema.sql`](./supabase/schema.sql).
+5. Trong **Authentication → Users**, tạo tài khoản cho Admin, Mover và Lifter; tắt public sign-up nếu người dùng không được tự đăng ký.
+6. Thêm hồ sơ/role cho từng tài khoản trong SQL Editor, thay email bằng email vừa tạo:
 
-## Luồng Put-away hiện tại
+```sql
+insert into public.smart_location_users (user_id, username, display_name, role)
+select id, 'admin', 'Nhân viên kiểm hàng', 'ADMIN'
+from auth.users where email = 'admin@example.com';
+
+insert into public.smart_location_users (user_id, username, display_name, role)
+select id, 'mover', 'Nhân viên nâng chuyển', 'MOVER'
+from auth.users where email = 'mover@example.com';
+
+insert into public.smart_location_users (user_id, username, display_name, role)
+select id, 'lifter', 'Nhân viên nâng hạ', 'LIFTER'
+from auth.users where email = 'lifter@example.com';
+```
+
+7. Khởi động lại `npm run dev`, sau đó đăng nhập bằng email và mật khẩu Supabase. Người dùng chỉ truy cập được dữ liệu khi có hồ sơ trong `smart_location_users`.
+
+Schema bật Row Level Security, chỉ Admin được tạo nhiệm vụ, Mover/Lifter chỉ được thực hiện bước chuyển trạng thái đúng vai trò; vai trò được đọc từ hồ sơ trong database, không tin role do trình duyệt gửi. Một unique index ngăn giữ cùng lúc một ô cho nhiều nhiệm vụ. Realtime publication cập nhật nhiệm vụ và báo cáo sự cố ở các thiết bị đang đăng nhập. Mật khẩu Supabase được đổi qua Supabase Auth trong mục Cài đặt.
+
+### 2. Cấu hình GitHub Pages
+
+Nếu deploy bằng workflow GitHub Pages, thêm repository Actions variables/secrets:
+
+- Variable `VITE_SUPABASE_URL`: Project URL.
+- Secret `VITE_SUPABASE_ANON_KEY`: publishable/anon key.
+
+Sau đó deploy lại để các giá trị được đưa vào bundle build. Publishable/anon key được thiết kế để xuất hiện phía trình duyệt; an toàn dữ liệu dựa vào Auth và RLS, không dựa vào việc giấu key.
+
+### Phạm vi đồng bộ
+
+- Đồng bộ đa thiết bị: nhiệm vụ Put-away, trạng thái/nhật ký sự kiện của nhiệm vụ, báo cáo sự cố, ô đang được giữ chỗ và hàng/nhật ký được tạo khi nhiệm vụ hoàn thành.
+- Các điều chỉnh tồn kho ngoài luồng Put-away (ví dụ xuất kho thủ công, khóa ô, báo sai lệch) vẫn dùng localStorage và chưa đồng bộ.
+- Dữ liệu demo/localStorage đã có không tự tải lên Supabase. Hãy sao lưu và xử lý dữ liệu cũ trước khi chuyển sang chế độ Supabase; khi đã cấu hình Supabase, đăng nhập demo bị tắt.
+- Nếu thiếu một trong hai biến Supabase, ứng dụng báo cấu hình không hợp lệ; nếu cả hai đều vắng mặt, ứng dụng chạy chế độ demo local.
+
+## Luồng Put-away
 
 1. Admin quét lô, chọn vị trí. Ô được giữ chỗ và lô chuyển sang `Chờ di chuyển`.
-2. Người nâng chuyển đưa hàng đến ô nhưng chưa đặt lên kệ, rồi xác nhận hoàn tất. Lô chuyển sang `Chờ nâng hạ`.
-3. Người nâng hạ bắt đầu nhiệm vụ, nâng hàng từ vị trí Mover bàn giao lên ô kệ được chỉ định, rồi xác minh mã vị trí hoặc xác nhận thủ công. Lô chuyển sang `Hoàn thành`; lúc này hàng mới được ghi vào tồn kho và nhật ký Put-away.
+2. Mover đưa hàng đến ô nhưng chưa đặt lên kệ, xác nhận bàn giao. Lô chuyển sang `Chờ nâng hạ`.
+3. Lifter bắt đầu nhiệm vụ, nâng hàng lên ô kệ được chỉ định, rồi xác minh mã vị trí hoặc xác nhận thủ công. Lô chuyển sang `Hoàn thành`; tồn kho và nhật ký Put-away được tạo từ nhiệm vụ.
 
-Giao diện Mover có sơ đồ kho với ô đích được làm nổi bật, danh sách lọc nhiệm vụ, kiểm tra mã vị trí trước khi xác nhận bàn giao, bảng hoàn thành và báo cáo sự cố. Giao diện Lifter chỉ hiển thị hàng đã được Mover bàn giao, vị trí chờ trước khu vực kệ và ô đích; không hiển thị tuyến vận chuyển. Khi Lifter bắt đầu, trạng thái `LIFTING_ACTIVE` được lưu trong nhiệm vụ để giữ chỗ và đồng bộ giữa các tab. Chỉ hoàn tất sau khi mã quét khớp hoặc nhân viên xác nhận thủ công. Báo cáo sự cố của cả hai vai trò được lưu trong `smartLocationPutAwayIncidents` và hiển thị cho Admin. Thời điểm bàn giao, hoàn thành và nhân viên lấy từ các sự kiện của nhiệm vụ; ca làm, mức ưu tiên và dữ liệu chưa được lưu sẽ không được tự tạo.
-
-Trạng thái, thông báo và nhật ký hiện được mô phỏng bằng `localStorage`. Các tab trong cùng trình duyệt được cập nhật qua sự kiện storage; dữ liệu chưa chia sẻ giữa thiết bị/trình duyệt khác. Chưa kết nối Supabase hoặc có xác thực/phân quyền phía máy chủ.
+Trong chế độ local, trạng thái được lưu bằng `localStorage` và đồng bộ giữa các tab cùng trình duyệt. Trong chế độ Supabase, trạng thái nhiệm vụ và sự cố dùng backend chung và realtime; các bước chuyển trạng thái dùng điều kiện trạng thái hiện tại để tránh ghi đè thao tác đồng thời.

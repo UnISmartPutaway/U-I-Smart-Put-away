@@ -123,20 +123,20 @@ function LifterWorkflow({
   const canComplete = Boolean(currentTask && currentTask.status === PUT_AWAY_STATUSES.LIFTING &&
     (locationMatches || manualConfirmed))
 
-  const beginLifting = (task) => {
+  const beginLifting = async (task) => {
     setSelectedTaskId(task.id)
     setManualLocation('')
     setManualConfirmed(false)
     onClearScannedLocation()
     setMessage('')
-    if (!onAdvanceTask(task.id)) {
+    if (!await onAdvanceTask(task.id)) {
       setMessage('Không thể bắt đầu nâng hạ. Hãy tải lại danh sách và thử lại.')
       return
     }
     setMessage(`Đang nâng hạ pallet ${task.palletCode || task.productCode}.`)
   }
 
-  const submitIncident = (event) => {
+  const submitIncident = async (event) => {
     event.preventDefault()
     if (!incidentTask) return
     const incident = {
@@ -155,7 +155,7 @@ function LifterWorkflow({
       reportedByRole: 'LIFTER',
       status: 'OPEN',
     }
-    if (!onReportIncident(incident)) {
+    if (!await onReportIncident(incident)) {
       setMessage('Không lưu được báo cáo sự cố trên thiết bị này. Hãy thử lại.')
       return
     }
@@ -164,10 +164,10 @@ function LifterWorkflow({
     setIncidentDescription('')
   }
 
-  const completeLifting = () => {
+  const completeLifting = async () => {
     if (!canComplete || !currentTask) return
     if (!window.confirm(`Xác nhận hoàn thành nâng hạ pallet ${currentTask.palletCode || currentTask.productCode} tại ${currentTask.locationId}?`)) return
-    if (!onAdvanceTask(currentTask.id)) {
+    if (!await onAdvanceTask(currentTask.id)) {
       setMessage('Không thể hoàn thành nâng hạ. Hãy kiểm tra trạng thái nhiệm vụ rồi thử lại.')
       return
     }
@@ -377,7 +377,7 @@ function MoverWorkflow({
     setMessage('')
   }
 
-  const submitIncident = (event) => {
+  const submitIncident = async (event) => {
     event.preventDefault()
     if (!incidentTask) return
     const incident = {
@@ -396,7 +396,7 @@ function MoverWorkflow({
       reportedByRole: 'MOVER',
       status: 'OPEN',
     }
-    if (!onReportIncident(incident)) {
+    if (!await onReportIncident(incident)) {
       setMessage('Không lưu được báo cáo sự cố trên thiết bị này. Hãy thử lại.')
       return
     }
@@ -555,9 +555,9 @@ function MoverWorkflow({
                   ))}
                 </ul>
               )}
-              <button className="operations-button mover-complete-button" type="button" disabled={!isStarted || !isLocationCorrect} onClick={() => {
+              <button className="operations-button mover-complete-button" type="button" disabled={!isStarted || !isLocationCorrect} onClick={async () => {
                 if (!window.confirm('Xác nhận pallet đã được chuyển đến đúng ô chỉ định (chưa đặt lên kệ)?')) return
-                const advanced = onAdvanceTask(currentTask.id)
+                const advanced = await onAdvanceTask(currentTask.id)
                 setMessage(advanced ? 'Đã xác nhận chuyển pallet đến vị trí. Lô hàng chuyển sang chờ nâng hạ.' : 'Không thể cập nhật công việc. Hãy tải lại trang và kiểm tra trạng thái vị trí.')
                 if (advanced) {
                   setSelectedTaskId('')
@@ -601,7 +601,7 @@ function MoverWorkflow({
   )
 }
 
-function PutAwayWorkflow({ tasks, user, view = 'workflow', locations = [], incidents = [], scannedLocationCode = '', onClearScannedLocation = () => {}, onOpenScanner, onAdvanceTask, onReportIncident, onNavigate }) {
+function PutAwayWorkflow({ tasks, user, view = 'workflow', locations = [], incidents = [], scannedLocationCode = '', onClearScannedLocation = () => {}, onOpenScanner, onAdvanceTask, onReportIncident, onNavigate, cloudConfigured = false }) {
   const [actionMessage, setActionMessage] = useState('')
   const pendingMoveCount = tasks.filter((task) => task.status === PUT_AWAY_STATUSES.WAITING_MOVE).length
   const pendingLiftCount = tasks.filter((task) => task.status === PUT_AWAY_STATUSES.WAITING_LIFT).length
@@ -688,7 +688,9 @@ function PutAwayWorkflow({ tasks, user, view = 'workflow', locations = [], incid
           {workTasks.length
             ? `Bạn có ${workTasks.length} lô đang chờ bước ${user.role === 'MOVER' ? 'nâng chuyển' : 'nâng hạ'}.`
             : `Hiện không có lô hàng chờ ${user.role === 'MOVER' ? 'nâng chuyển' : 'nâng hạ'}.`}
-          {' '}Danh sách tự cập nhật khi trạng thái thay đổi trên trình duyệt này.
+          {' '}{cloudConfigured
+            ? 'Danh sách tự cập nhật khi trạng thái thay đổi trên các thiết bị đang kết nối.'
+            : 'Danh sách tự cập nhật khi trạng thái thay đổi trên các tab của trình duyệt này.'}
         </div>
       )}
 
@@ -737,10 +739,10 @@ function PutAwayWorkflow({ tasks, user, view = 'workflow', locations = [], incid
                     <button
                       className="operations-button putaway-task-action"
                       type="button"
-                      onClick={() => {
+                      onClick={async () => {
                         if (!window.confirm(action.confirm)) return
                         setActionMessage(
-                          onAdvanceTask(task.id)
+                          await onAdvanceTask(task.id)
                             ? 'Đã cập nhật trạng thái lô hàng.'
                             : 'Không thể cập nhật công việc. Hãy tải lại trang và kiểm tra trạng thái ô.'
                         )
@@ -805,7 +807,9 @@ function PutAwayWorkflow({ tasks, user, view = 'workflow', locations = [], incid
         )}
       </section>
       <p className="putaway-prototype-note">
-        Bản mô phỏng hiện đồng bộ giữa các tab của cùng trình duyệt bằng localStorage; chưa đồng bộ đa thiết bị.
+        {cloudConfigured
+          ? 'Nhiệm vụ, trạng thái phân luồng và báo cáo sự cố được chia sẻ qua Supabase realtime.'
+          : 'Bản mô phỏng đồng bộ giữa các tab của cùng trình duyệt bằng localStorage; chưa đồng bộ đa thiết bị.'}
       </p>
     </div>
   )

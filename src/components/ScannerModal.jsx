@@ -376,7 +376,7 @@ function ScannerModal({
     runRecommendation()
   }
 
-  const handleStoreSelectedRecommendation = () => {
+  const handleStoreSelectedRecommendation = async () => {
     if (!batchDetails || !selectedLocationId) return
 
     const batchSizeError = getBatchSizeError(batchDetails)
@@ -395,7 +395,7 @@ function ScannerModal({
     const locationId = selectedLocation.id
     if (!window.confirm(`Tạo lệnh put-away cho ${batchDetails.productName || batchDetails.productCode} tại ${locationId}? Lô sẽ chờ người nâng chuyển đưa đến vị trí này.`)) return
 
-    if (!onStoreBatch(batchDetails, locationId, {
+    if (!await onStoreBatch(batchDetails, locationId, {
       suggestedLocationId: topRecommendation?.location.id || '',
       selectionMethod,
     })) {

@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import BrandMark from './BrandMark'
 import { readAccountPasswordHashes, verifyAccountPassword } from '../data/accountSecurity'
+import { getUserProfile } from '../data/putAwayRepository'
+import { supabase } from '../data/supabase'
 
-function Login({ onLogin }) {
+function Login({ onLogin, authError = '' }) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -12,6 +14,30 @@ function Login({ onLogin }) {
   const handleSubmit = async (e) => {
     e.preventDefault()
     setIsSubmitting(true)
+
+    if (supabase) {
+      try {
+        const { data, error: signInError } = await supabase.auth.signInWithPassword({
+          email: username.trim(),
+          password,
+        })
+        if (signInError) throw signInError
+
+        try {
+          const profile = await getUserProfile(data.user.id)
+          onLogin({ ...profile, id: data.user.id })
+          setError('')
+        } catch (profileError) {
+          await supabase.auth.signOut()
+          throw profileError
+        }
+      } catch (loginError) {
+        setError(loginError.message || 'Không thể xác thực tài khoản với Supabase.')
+      } finally {
+        setIsSubmitting(false)
+      }
+      return
+    }
 
     const demoAccounts = {
       admin: { name: 'Nhân viên kiểm hàng', role: 'ADMIN' },
@@ -63,12 +89,12 @@ function Login({ onLogin }) {
         <form onSubmit={handleSubmit}>
 
           <div className="login-field">
-            <label htmlFor="login-username">Tên đăng nhập</label>
+            <label htmlFor="login-username">{supabase ? 'Email tài khoản' : 'Tên đăng nhập'}</label>
 
             <input
               id="login-username"
-              type="text"
-              placeholder="Nhập tên đăng nhập"
+              type={supabase ? 'email' : 'text'}
+              placeholder={supabase ? 'Nhập email đã đăng ký' : 'Nhập tên đăng nhập'}
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               autoFocus
@@ -99,9 +125,9 @@ function Login({ onLogin }) {
             </div>
           </div>
 
-          {error && (
+          {(error || authError) && (
             <div className="login-error">
-              {error}
+              {error || authError}
             </div>
           )}
 
@@ -131,7 +157,7 @@ function Login({ onLogin }) {
 
         </form>
 
-        <div className="login-demo">
+        {!supabase && <div className="login-demo">
           <p>Tài khoản mô phỏng · mật khẩu ban đầu: <b>123456</b></p>
 
           <span>
@@ -145,7 +171,7 @@ function Login({ onLogin }) {
           <span>
             Nâng hạ: <b>lifter</b>
           </span>
-        </div>
+        </div>}
 
       </div>
 

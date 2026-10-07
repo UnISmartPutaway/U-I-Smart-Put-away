@@ -178,6 +178,7 @@ function LocationTable({ locations, allowShipment, onShipLocation, onToggleLocat
 function OperationsView({
   view,
   user,
+  cloudConfigured,
   locations,
   inboundPlacements,
   putAwayLog,
@@ -520,8 +521,12 @@ function OperationsView({
         <section className="operations-heading">
           <h2>{user?.role === 'ADMIN' ? 'Cài đặt tài khoản và dữ liệu' : 'Cài đặt tài khoản'}</h2>
           <p>{user?.role === 'ADMIN'
-            ? 'Quản lý mật khẩu tài khoản và dữ liệu kho được lưu trong trình duyệt hiện tại.'
-            : 'Quản lý mật khẩu tài khoản đang đăng nhập trên trình duyệt này.'}</p>
+            ? cloudConfigured
+              ? 'Mật khẩu và tài khoản được quản lý bằng Supabase; một số điều chỉnh kho vẫn lưu cục bộ.'
+              : 'Quản lý mật khẩu tài khoản và dữ liệu kho được lưu trong trình duyệt hiện tại.'
+            : cloudConfigured
+              ? 'Đổi mật khẩu tài khoản Supabase đang đăng nhập.'
+              : 'Quản lý mật khẩu tài khoản đang đăng nhập trên trình duyệt này.'}</p>
         </section>
         <section className="operations-panel password-settings">
           <div className="operations-panel-heading">
@@ -561,7 +566,9 @@ function OperationsView({
                 required
               />
             </label>
-            <p className="password-form-hint">Mật khẩu phải có ít nhất 6 ký tự. Lưu ý: mật khẩu demo được lưu riêng trên trình duyệt hiện tại.</p>
+            <p className="password-form-hint">Mật khẩu phải có ít nhất 6 ký tự. {cloudConfigured
+              ? 'Mật khẩu tài khoản được cập nhật qua Supabase.'
+              : 'Mật khẩu demo được lưu riêng trên trình duyệt hiện tại.'}</p>
             <button className="operations-button" type="submit" disabled={isChangingPassword}>
               {isChangingPassword ? 'Đang cập nhật...' : 'Cập nhật mật khẩu'}
             </button>
@@ -575,17 +582,19 @@ function OperationsView({
         {user?.role === 'ADMIN' && (
           <section className="operations-panel operations-settings">
             <div>
-              <h3>Sao lưu dữ liệu kho cục bộ</h3>
-              <p>Tải xuống các lượt nhập mới và danh sách vị trí đã xuất trên thiết bị này.</p>
+              <h3>{cloudConfigured ? 'Sao lưu dữ liệu thiết bị này' : 'Sao lưu dữ liệu kho cục bộ'}</h3>
+              <p>{cloudConfigured
+                ? 'Bản sao lưu gồm các điều chỉnh nhập/xuất và dữ liệu phân luồng đang hiển thị.'
+                : 'Tải xuống các lượt nhập mới và danh sách vị trí đã xuất trên thiết bị này.'}</p>
               <button className="operations-button" type="button" onClick={onExportBackup}>Tải bản sao lưu</button>
             </div>
-            <div>
+            {!cloudConfigured && <div>
               <h3>Khôi phục trạng thái dữ liệu gốc</h3>
               <p>Xóa các điều chỉnh nhập/xuất cục bộ. Dữ liệu tồn kho ban đầu không bị thay đổi.</p>
               <button className="operations-button operations-button--danger" type="button" onClick={onResetInventory}>
                 Khôi phục dữ liệu gốc
               </button>
-            </div>
+            </div>}
           </section>
         )}
       </>

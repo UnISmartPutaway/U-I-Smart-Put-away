@@ -3913,6 +3913,22 @@ button {
   line-height: 1.5;
 }
 
+.workflow-sync-status {
+  margin: 10px 0;
+  padding: 10px 14px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1e40af;
+  font-size: 13px;
+}
+
+.workflow-sync-status--error {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
 .smart-putaway-dashboard {
   display: grid;
   gap: 18px;

@@ -23,6 +23,15 @@ import {
   normalizePutAwayTasks,
   PUT_AWAY_STATUSES,
 } from './data/putAwayWorkflow'
+import {
+  advancePutAwayTask as advanceRemotePutAwayTask,
+  createPutAwayIncident,
+  createPutAwayTask,
+  getUserProfile,
+  loadPutAwaySnapshot,
+  subscribeToPutAwayChanges,
+} from './data/putAwayRepository'
+import { supabase } from './data/supabase'
 
 function readStoredUser() {
   try {
@@ -97,6 +106,49 @@ function readStoredPutAwayTasks() {
   return normalizePutAwayTasks(readStoredArray('smartLocationPutAwayTasks'))
 }
 
+function getCompletedWorkflowRecords(tasks) {
+  const completedTasks = tasks.filter((task) => task.status === PUT_AWAY_STATUSES.COMPLETED)
+  return {
+    placements: completedTasks.map((task) => ({
+      id: `inbound-${task.id}`,
+      locationId: task.locationId,
+      productCode: task.productCode,
+      productName: task.productName,
+      palletCode: task.palletCode,
+      lotCode: task.lotCode,
+      customerId: task.customerId,
+      supplier: task.supplier,
+      palletNote: task.palletNote,
+      quantity: task.quantity,
+      packageCount: task.packageCount,
+      grossWeightKg: task.grossWeightKg,
+      netWeightKg: task.netWeightKg,
+      cbm: task.cbm,
+      heightCm: task.heightCm,
+      widthCm: task.widthCm,
+      depthCm: task.depthCm,
+      receivedAt: task.updatedAt,
+    })),
+    log: completedTasks.map((task) => {
+      const completionEvent = task.events?.find(
+        (event) => event.status === PUT_AWAY_STATUSES.COMPLETED
+      )
+      return {
+        id: `putaway-log-${task.id}`,
+        receivedAt: task.updatedAt,
+        employeeName: completionEvent?.actorName || task.createdByName,
+        employeeUsername: completionEvent?.actorUsername || task.createdByUsername,
+        productCode: task.productCode,
+        productName: task.productName,
+        suggestedLocationId: task.suggestedLocationId,
+        selectedLocationId: task.locationId,
+        followedSuggestion: task.suggestedLocationId === task.locationId,
+        selectionMethod: task.selectionMethod,
+      }
+    }),
+  }
+}
+
 function saveLocalStorageUpdates(updates) {
   const previousValues = Object.fromEntries(
     Object.keys(updates).map((key) => [key, localStorage.getItem(key)])
@@ -128,7 +180,10 @@ function createOutboundShipmentId() {
 }
 
 function App() {
-  const [user, setUser] = useState(readStoredUser)
+  const [user, setUser] = useState(() => supabase ? null : readStoredUser())
+  const [authReady, setAuthReady] = useState(!supabase)
+  const [syncStatus, setSyncStatus] = useState(supabase ? 'connecting' : 'local')
+  const [syncError, setSyncError] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [scannerOpen, setScannerOpen] = useState(false)
   const [scannerInitialValue, setScannerInitialValue] = useState('')
@@ -185,8 +240,8 @@ function App() {
       return []
     }
   })
-  const [putAwayTasks, setPutAwayTasks] = useState(readStoredPutAwayTasks)
-  const [putAwayIncidents, setPutAwayIncidents] = useState(() => readStoredArray('smartLocationPutAwayIncidents'))
+  const [putAwayTasks, setPutAwayTasks] = useState(() => supabase ? [] : readStoredPutAwayTasks())
+  const [putAwayIncidents, setPutAwayIncidents] = useState(() => supabase ? [] : readStoredArray('smartLocationPutAwayIncidents'))
   const [scannedPutAwayLocation, setScannedPutAwayLocation] = useState('')
   const activePutAwayTasks = getActivePutAwayTasks(putAwayTasks)
   const reservedTasksByLocation = new Map(
@@ -205,19 +260,48 @@ function App() {
 
   const handleLogin = (userData) => {
     setUser(userData)
-    sessionStorage.setItem('smartLocationUser', JSON.stringify(userData))
+    setSyncError('')
+    if (supabase) setSyncStatus('connecting')
+    if (!supabase) sessionStorage.setItem('smartLocationUser', JSON.stringify(userData))
     setActiveView(userData.role === 'ADMIN' ? 'dashboard' : 'workflow')
   }
 
-  const handleLogout = () => {
-    sessionStorage.removeItem('smartLocationUser')
+  const handleLogout = async () => {
+    if (supabase) {
+      const { error } = await supabase.auth.signOut()
+      if (error) {
+        setSyncError(error.message)
+        return
+      }
+    } else {
+      sessionStorage.removeItem('smartLocationUser')
+    }
     setUser(null)
+    setPutAwayTasks([])
+    setPutAwayIncidents([])
+    setSyncError('')
   }
 
   const handleChangePassword = async (currentPassword, newPassword) => {
     if (!user?.username) return { success: false, message: 'Không xác định được tài khoản đang đăng nhập.' }
 
     try {
+      if (supabase) {
+        const { data, error: userError } = await supabase.auth.getUser()
+        if (userError) throw userError
+        if (!data.user?.email) throw new Error('Không lấy được email tài khoản Supabase.')
+        const { error: verificationError } = await supabase.auth.signInWithPassword({
+          email: data.user.email,
+          password: currentPassword,
+        })
+        if (verificationError) {
+          return { success: false, message: 'Mật khẩu hiện tại không chính xác.' }
+        }
+        const { error } = await supabase.auth.updateUser({ password: newPassword })
+        if (error) throw error
+        return { success: true, message: 'Đổi mật khẩu tài khoản Supabase thành công.' }
+      }
+
       const passwordHashes = readAccountPasswordHashes()
       const savedHash = passwordHashes[user.username]
       const currentPasswordMatches = savedHash
@@ -260,7 +344,22 @@ function App() {
     setScannerInitialValue('')
   }, [])
 
-  const handleReportPutAwayIncident = (incident) => {
+  const handleReportPutAwayIncident = async (incident) => {
+    if (supabase) {
+      try {
+        await createPutAwayIncident(incident, user.id)
+        setPutAwayIncidents((current) => current.some((item) => item.id === incident.id)
+          ? current
+          : [...current, incident])
+        setSyncError('')
+        return true
+      } catch (error) {
+        console.error('Unable to save the put-away incident to Supabase.', error)
+        setSyncError(error.message || 'Không thể lưu báo cáo sự cố vào Supabase.')
+        return false
+      }
+    }
+
     const nextIncidents = [...putAwayIncidents, incident]
     if (!saveLocalStorageUpdates({ smartLocationPutAwayIncidents: nextIncidents })) return false
     setPutAwayIncidents(nextIncidents)
@@ -279,7 +378,7 @@ function App() {
     setActiveView('map')
   }
 
-  const handleConfirmSmartPlacement = (batch, recommendation, bestRecommendation) => {
+  const handleConfirmSmartPlacement = async (batch, recommendation, bestRecommendation) => {
     if (user?.role !== 'ADMIN' || !recommendation?.location?.id) return
     const locationId = recommendation.location.id
     const target = warehouseLocations.find((location) => location.id === locationId)
@@ -291,7 +390,7 @@ function App() {
       return
     }
     if (!window.confirm(`Xác nhận vị trí ${locationId} cho ${batch.productName || batch.productCode}?`)) return
-    const saved = handleInboundStore(batch, locationId, {
+    const saved = await handleInboundStore(batch, locationId, {
       suggestedLocationId: bestRecommendation?.location?.id || '',
       selectionMethod: recommendation.location.id === bestRecommendation?.location?.id
         ? 'RECOMMENDATION'
@@ -306,7 +405,7 @@ function App() {
     }))
   }
 
-  const handleInboundStore = (batch, locationId, placementContext) => {
+  const handleInboundStore = async (batch, locationId, placementContext) => {
     if (user?.role !== 'ADMIN') return false
     const target = warehouseLocations.find((location) => location.id === locationId)
     if (!target || target.status !== 'AVAILABLE') return false
@@ -344,6 +443,21 @@ function App() {
         occurredAt: createdAt,
       }],
     }
+    if (supabase) {
+      try {
+        await createPutAwayTask(task, user.id)
+        setPutAwayTasks((current) => current.some((item) => item.id === task.id)
+          ? current
+          : [...current, task])
+        setSyncError('')
+        return true
+      } catch (error) {
+        console.error('Unable to create the put-away task in Supabase.', error)
+        setSyncError(error.message || 'Không thể tạo nhiệm vụ trên Supabase.')
+        return false
+      }
+    }
+
     const nextTasks = [...putAwayTasks, task]
     if (!saveLocalStorageUpdates({ smartLocationPutAwayTasks: nextTasks })) return false
 
@@ -351,11 +465,36 @@ function App() {
     return true
   }
 
-  const handleAdvancePutAwayTask = (taskId) => {
+  const handleAdvancePutAwayTask = async (taskId) => {
     const currentTask = putAwayTasks.find((task) => task.id === taskId)
     if (!currentTask || !user) return false
     const nextTask = advancePutAwayTask(currentTask, user.role, user)
     if (!nextTask) return false
+    if (supabase) {
+      try {
+        const updated = await advanceRemotePutAwayTask(currentTask, nextTask)
+        if (!updated) return false
+        setPutAwayTasks((current) => current.map((task) =>
+          task.id === taskId ? nextTask : task
+        ))
+        if (nextTask.status === PUT_AWAY_STATUSES.COMPLETED) {
+          const completedRecords = getCompletedWorkflowRecords([nextTask])
+          setInboundPlacements((current) => current.some(
+            (placement) => placement.id === completedRecords.placements[0].id
+          ) ? current : [...current, ...completedRecords.placements])
+          setPutAwayLog((current) => current.some(
+            (entry) => entry.id === completedRecords.log[0].id
+          ) ? current : [...current, ...completedRecords.log])
+        }
+        setSyncError('')
+        return true
+      } catch (error) {
+        console.error('Unable to advance the put-away task in Supabase.', error)
+        setSyncError(error.message || 'Không thể cập nhật nhiệm vụ trên Supabase.')
+        return false
+      }
+    }
+
     const nextTasks = putAwayTasks.map((task) => task.id === taskId ? nextTask : task)
 
     if (nextTask.status !== PUT_AWAY_STATUSES.COMPLETED) {
@@ -567,6 +706,91 @@ function App() {
   }
 
   useEffect(() => {
+    if (!supabase) return undefined
+    let active = true
+
+    const restoreSession = async () => {
+      try {
+        const { data, error } = await supabase.auth.getSession()
+        if (error) throw error
+        if (data.session) {
+          const profile = await getUserProfile(data.session.user.id)
+          if (active) {
+            setUser({ ...profile, id: data.session.user.id })
+            setActiveView(profile.role === 'ADMIN' ? 'dashboard' : 'workflow')
+            setSyncError('')
+          }
+        }
+      } catch (error) {
+        console.error('Unable to restore the Supabase session.', error)
+        if (active) setSyncError(error.message || 'Không thể khôi phục phiên Supabase.')
+      } finally {
+        if (active) setAuthReady(true)
+      }
+    }
+
+    restoreSession()
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT' && active) {
+        setUser(null)
+        setPutAwayTasks([])
+        setPutAwayIncidents([])
+      }
+    })
+
+    return () => {
+      active = false
+      subscription.unsubscribe()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!supabase || !user) return undefined
+    let active = true
+    let latestSnapshotRequest = 0
+
+    const refreshSnapshot = async () => {
+      const requestVersion = ++latestSnapshotRequest
+      try {
+        const snapshot = await loadPutAwaySnapshot()
+        if (!active || requestVersion !== latestSnapshotRequest) return
+        setPutAwayTasks(snapshot.tasks)
+        setPutAwayIncidents(snapshot.incidents)
+        const completedRecords = getCompletedWorkflowRecords(snapshot.tasks)
+        setInboundPlacements(completedRecords.placements)
+        setPutAwayLog(completedRecords.log)
+        setSyncError('')
+      } catch (error) {
+        console.error('Unable to load the shared put-away workflow.', error)
+        if (active && requestVersion === latestSnapshotRequest) {
+          setSyncError(error.message || 'Không thể tải dữ liệu phân luồng từ Supabase.')
+        }
+      }
+    }
+
+    refreshSnapshot()
+    const unsubscribe = subscribeToPutAwayChanges(
+      refreshSnapshot,
+      (status, error) => {
+        if (!active) return
+        if (status === 'SUBSCRIBED') {
+          setSyncStatus('connected')
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          setSyncStatus('error')
+          setSyncError(error?.message || `Kết nối realtime thất bại (${status}).`)
+        } else if (status === 'CLOSED') {
+          setSyncStatus('connecting')
+        }
+      }
+    )
+
+    return () => {
+      active = false
+      unsubscribe()
+    }
+  }, [user])
+
+  useEffect(() => {
     const syncStoredWorkflow = (event) => {
       if (event.key === 'smartLocationPutAwayTasks') setPutAwayTasks(readStoredPutAwayTasks())
       if (event.key === 'smartLocationPutAwayIncidents') setPutAwayIncidents(readStoredArray(event.key))
@@ -589,8 +813,12 @@ function App() {
     (location) => location.status === 'AVAILABLE'
   ).length
 
+  if (!authReady) {
+    return <div className="login-page"><p>Đang kết nối tài khoản Supabase...</p></div>
+  }
+
   if (!user) {
-    return <Login onLogin={handleLogin} />
+    return <Login onLogin={handleLogin} authError={syncError} />
   }
 
   const visibleNavGroups = user.role === 'ADMIN'
@@ -743,6 +971,16 @@ function App() {
           <button className="mobile-logout" type="button" onClick={handleLogout}>Đăng xuất</button>
         </header>
 
+        {supabase && (
+          <div className={`workflow-sync-status workflow-sync-status--${syncStatus}`} role={syncError ? 'alert' : 'status'}>
+            {syncError
+              ? `Lỗi đồng bộ Supabase: ${syncError}`
+              : syncStatus === 'connected'
+                ? 'Đã kết nối dữ liệu Put-away realtime'
+                : 'Đang kết nối dữ liệu Put-away...'}
+          </div>
+        )}
+
         {activeView === 'workflow' || activeView.startsWith('mover-') || activeView.startsWith('lifter-') ? (
           <PutAwayWorkflow
             tasks={putAwayTasks}
@@ -756,6 +994,7 @@ function App() {
             onAdvanceTask={handleAdvancePutAwayTask}
             onReportIncident={handleReportPutAwayIncident}
             onNavigate={handleNavigation}
+            cloudConfigured={Boolean(supabase)}
           />
         ) : activeView === 'dashboard' ? (
           <>
@@ -812,6 +1051,7 @@ function App() {
           <OperationsView
             view={activeView}
             user={user}
+            cloudConfigured={Boolean(supabase)}
             locations={warehouseLocations}
             inboundPlacements={inboundPlacements}
             putAwayLog={putAwayLog}
