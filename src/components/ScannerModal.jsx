@@ -120,10 +120,10 @@ function getBatchSizeError(batch) {
   const slotDimensions = [
     STORAGE_SLOT_LIMITS.heightCm,
     STORAGE_SLOT_LIMITS.widthCm,
-    STORAGE_SLOT_LIMITS.depthCm,
+    STORAGE_SLOT_LIMITS.lengthCm,
   ].sort((left, right) => right - left)
   if (!packageDimensions.every((dimension, index) => dimension <= slotDimensions[index])) {
-    return `Kiện hàng vượt kích thước ô tối đa ${STORAGE_SLOT_LIMITS.heightCm} × ${STORAGE_SLOT_LIMITS.widthCm} × ${STORAGE_SLOT_LIMITS.depthCm} cm.`
+    return `Kiện hàng vượt kích thước ô tối đa: cao ${STORAGE_SLOT_LIMITS.heightCm} × rộng ${STORAGE_SLOT_LIMITS.widthCm} × dài ${STORAGE_SLOT_LIMITS.lengthCm} cm.`
   }
 
   if (Number(batch.grossWeightKg) > STORAGE_SLOT_LIMITS.maxGrossWeightKg) {
@@ -809,7 +809,7 @@ function ScannerModal({
                     <input name="widthCm" type="number" min="0.1" step="0.1" value={batchDetails.widthCm} onChange={handleBatchChange} required />
                   </label>
                   <label>
-                    Chiều sâu (cm)
+                    Chiều dài (cm)
                     <input name="depthCm" type="number" min="0.1" step="0.1" value={batchDetails.depthCm} onChange={handleBatchChange} required />
                   </label>
                   <label>

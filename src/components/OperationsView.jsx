@@ -736,7 +736,7 @@ function OperationsView({
                 <div><dt>Mã sản phẩm</dt><dd>{batch.productCode || '—'}</dd></div>
                 <div><dt>Tên hàng</dt><dd>{batch.productName || '—'}</dd></div>
                 <div><dt>Khối lượng GW</dt><dd>{batch.grossWeightKg || '—'}{batch.grossWeightKg ? ' kg' : ''}</dd></div>
-                <div><dt>Kích thước D × R × C</dt><dd>{batch.depthCm || '—'} × {batch.widthCm || '—'} × {batch.heightCm || '—'} cm</dd></div>
+                <div><dt>Kích thước Dài × Rộng × Cao</dt><dd>{batch.depthCm || '—'} × {batch.widthCm || '—'} × {batch.heightCm || '—'} cm</dd></div>
                 <div><dt>Thể tích</dt><dd>{batch.cbm || '—'}{batch.cbm ? ' m³' : ''}</dd></div>
                 <div><dt>Số lượng</dt><dd>{batch.quantity || '—'}</dd></div>
                 <div><dt>Nhà cung cấp</dt><dd>{batch.supplier || batch.customerId || '—'}</dd></div>
@@ -786,7 +786,7 @@ function OperationsView({
               <div className="smart-hard-constraints">
                 <div className="smart-panel-heading"><div><span className="smart-section-kicker">GIAI ĐOẠN 1</span><h4>Hard Constraints</h4></div><span>Loại vị trí không hợp lệ</span></div>
                 <div className="smart-constraint-list">
-                  <div className={fits ? 'is-pass' : 'is-fail'}><span>{fits ? '✓' : '!'}</span><div><strong>Kích thước &amp; thể tích pallet</strong><small>Giới hạn ô: {STORAGE_SLOT_LIMITS.heightCm} × {STORAGE_SLOT_LIMITS.widthCm} × {STORAGE_SLOT_LIMITS.depthCm} cm</small></div></div>
+                  <div className={fits ? 'is-pass' : 'is-fail'}><span>{fits ? '✓' : '!'}</span><div><strong>Kích thước &amp; thể tích pallet</strong><small>Giới hạn ô (cao × rộng × dài): {STORAGE_SLOT_LIMITS.heightCm} × {STORAGE_SLOT_LIMITS.widthCm} × {STORAGE_SLOT_LIMITS.lengthCm} cm</small></div></div>
                   <div className={batch.grossWeightKg <= STORAGE_SLOT_LIMITS.maxGrossWeightKg ? 'is-pass' : 'is-fail'}><span>{batch.grossWeightKg <= STORAGE_SLOT_LIMITS.maxGrossWeightKg ? '✓' : '!'}</span><div><strong>Tải trọng tối đa {STORAGE_SLOT_LIMITS.maxGrossWeightKg.toLocaleString('vi-VN')} kg</strong><small>Pallet hiện tại: {batch.grossWeightKg || '—'} kg</small></div></div>
                   <div className={availableLocationCount ? 'is-pass' : 'is-fail'}><span>{availableLocationCount ? '✓' : '!'}</span><div><strong>Vị trí khả dụng</strong><small>{availableLocationCount.toLocaleString('vi-VN')} ô đang trống; ô đầy, bảo trì và bị khóa không được xét</small></div></div>
                 </div>

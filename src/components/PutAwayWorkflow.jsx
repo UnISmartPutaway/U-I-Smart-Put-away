@@ -230,7 +230,7 @@ function LifterWorkflow({
                   <div><span>{getTaskReference(task)}</span><h3>{task.palletCode || 'Chưa gán mã pallet'}</h3><p>{task.productName || '—'} · {task.productCode || '—'}</p></div>
                   <span className="lifter-status lifter-status--waiting">Chờ nâng hạ</span>
                 </div>
-                <div className="lifter-queue-meta"><span>{task.grossWeightKg ? `${task.grossWeightKg} kg` : 'Khối lượng —'}</span><span>{task.heightCm && task.widthCm && task.depthCm ? `${task.heightCm} × ${task.widthCm} × ${task.depthCm} cm` : 'Kích thước —'}</span><span>Giao lúc {delivered?.occurredAt ? formatTimestamp(delivered.occurredAt) : 'Chưa ghi nhận'}</span><span>Ưu tiên: {task.priority || task.urgency || 'Chưa thiết lập'}</span></div>
+                <div className="lifter-queue-meta"><span>{task.grossWeightKg ? `${task.grossWeightKg} kg` : 'Khối lượng —'}</span><span>{task.heightCm && task.widthCm && task.depthCm ? `${task.heightCm} × ${task.widthCm} × ${task.depthCm} cm (cao × rộng × dài)` : 'Kích thước —'}</span><span>Giao lúc {delivered?.occurredAt ? formatTimestamp(delivered.occurredAt) : 'Chưa ghi nhận'}</span><span>Ưu tiên: {task.priority || task.urgency || 'Chưa thiết lập'}</span></div>
                 <div className="lifter-location-pair">
                   <div className="lifter-location-current"><span>VỊ TRÍ HÀNG HIỆN TẠI</span><strong>📦 {getDeliveryPosition(task)}</strong><small>Hàng đã được nhân viên nâng chuyển giao đến</small></div>
                   <div className="lifter-location-target"><span>VỊ TRÍ CẦN NÂNG LÊN</span><strong>⬆ {task.locationId}</strong><small>{taskLocation ? `Dãy ${taskLocation.row} · Khoang ${taskLocation.bay} · Tầng ${taskLocation.level} · Ô ${taskLocation.slot}` : 'Ô kệ chỉ định'}</small></div>
@@ -283,7 +283,7 @@ function LifterWorkflow({
         <section className="lifter-active-card">
           <div className="lifter-active-heading"><div><span>THAO TÁC ĐANG DIỄN RA</span><h2>Đang nâng hạ</h2></div><span className="lifter-status lifter-status--active">Đang thực hiện</span></div>
           {activeTasks.length > 1 && <div className="lifter-task-switcher" aria-label="Chuyển nhiệm vụ đang nâng hạ">{activeTasks.map((task) => <button className={task.id === currentTask.id ? 'is-selected' : ''} type="button" key={task.id} onClick={() => { setSelectedTaskId(task.id); setManualLocation(''); setManualConfirmed(false); onClearScannedLocation() }}>{task.palletCode || task.productCode} · {task.locationId}</button>)}</div>}
-          <div className="lifter-active-product"><span>Pallet {currentTask.palletCode || '—'}</span><strong>{currentTask.productName || '—'} · {currentTask.productCode || '—'}</strong><small>{currentTask.grossWeightKg ? `${currentTask.grossWeightKg} kg` : 'Khối lượng chưa ghi nhận'}{currentTask.heightCm && currentTask.widthCm && currentTask.depthCm ? ` · ${currentTask.heightCm} × ${currentTask.widthCm} × ${currentTask.depthCm} cm` : ''}</small></div>
+          <div className="lifter-active-product"><span>Pallet {currentTask.palletCode || '—'}</span><strong>{currentTask.productName || '—'} · {currentTask.productCode || '—'}</strong><small>{currentTask.grossWeightKg ? `${currentTask.grossWeightKg} kg` : 'Khối lượng chưa ghi nhận'}{currentTask.heightCm && currentTask.widthCm && currentTask.depthCm ? ` · ${currentTask.heightCm} × ${currentTask.widthCm} × ${currentTask.depthCm} cm (cao × rộng × dài)` : ''}</small></div>
           <div className="lifter-active-locations"><div><span>HÀNG HIỆN TẠI</span><strong>📦 {getDeliveryPosition(currentTask)}</strong><small>Đã được Mover bàn giao · {getDeliveryEvent(currentTask)?.occurredAt ? formatTimestamp(getDeliveryEvent(currentTask).occurredAt) : 'Thời điểm chưa ghi nhận'}</small></div><div className="lifter-active-target"><span>NÂNG LÊN Ô KỆ</span><strong>{currentTask.locationId}</strong><small>{location ? `DÃY ${location.row} · KHOANG ${location.bay} · TẦNG ${location.level} · Ô ${location.slot}` : 'Ô kệ được chỉ định'}</small></div></div>
           <ol className="lifter-workflow-steps">{statusSteps.map((step, index) => <li className={index < 3 ? 'is-done' : index === 3 ? 'is-active' : ''} key={step}><span>{index < 3 ? '✓' : index === 3 ? '●' : '○'}</span>{step}</li>)}</ol>
           <div className="lifter-active-actions"><button type="button" className="lifter-complete-button" onClick={() => { setManualLocation(''); setManualConfirmed(false); onClearScannedLocation(); setShowCompletionModal(true) }}>Xác nhận đã đưa hàng lên kệ</button><button type="button" className="lifter-danger-button" onClick={() => setIncidentTask(currentTask)}>⚠ Báo sự cố</button></div>
@@ -510,7 +510,7 @@ function MoverWorkflow({
                   <div><span>MÃ SẢN PHẨM</span><strong>{currentTask.productCode || '—'}</strong></div>
                   <div><span>TÊN HÀNG</span><strong>{currentTask.productName || '—'}</strong></div>
                   <div><span>KHỐI LƯỢNG</span><strong>{currentTask.grossWeightKg ? `${currentTask.grossWeightKg} kg` : '—'}</strong></div>
-                  <div><span>KÍCH THƯỚC</span><strong>{currentTask.heightCm && currentTask.widthCm && currentTask.depthCm ? `${currentTask.heightCm} × ${currentTask.widthCm} × ${currentTask.depthCm} cm` : '—'}</strong></div>
+                  <div><span>KÍCH THƯỚC (CAO × RỘNG × DÀI)</span><strong>{currentTask.heightCm && currentTask.widthCm && currentTask.depthCm ? `${currentTask.heightCm} × ${currentTask.widthCm} × ${currentTask.depthCm} cm` : '—'}</strong></div>
                   <div><span>CBM</span><strong>{currentTask.cbm ? `${currentTask.cbm} m³` : '—'}</strong></div>
                   <div><span>SỐ LƯỢNG</span><strong>{currentTask.quantity || currentTask.packageCount || '—'}</strong></div>
                   <div><span>KHÁCH HÀNG / NHÀ CUNG CẤP</span><strong>{currentTask.customerId || currentTask.supplier || '—'}</strong></div>
@@ -721,7 +721,7 @@ function PutAwayWorkflow({ tasks, user, view = 'workflow', locations = [], incid
                   </div>
                   <div className="putaway-task-meta">
                     <span>GW: {task.grossWeightKg || '—'} kg</span>
-                    <span>Kích thước: {task.heightCm} × {task.widthCm} × {task.depthCm} cm</span>
+                    <span>Kích thước (cao × rộng × dài): {task.heightCm} × {task.widthCm} × {task.depthCm} cm</span>
                     <span>Tạo bởi: {task.createdByName || '—'}</span>
                     <span>Đề xuất AI: {task.suggestedLocationId || '—'}</span>
                   </div>

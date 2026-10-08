@@ -9,14 +9,14 @@ const SCORE_WEIGHTS = {
 const INBOUND_ROW = 101
 export const STORAGE_SLOT_LIMITS = {
   heightCm: 200,
-  widthCm: 400,
-  depthCm: 180,
+  widthCm: 180,
+  lengthCm: 400,
   maxGrossWeightKg: 2000,
 }
 const SLOT_MAX_VOLUME_CBM =
   STORAGE_SLOT_LIMITS.heightCm *
   STORAGE_SLOT_LIMITS.widthCm *
-  STORAGE_SLOT_LIMITS.depthCm /
+  STORAGE_SLOT_LIMITS.lengthCm /
   1_000_000
 
 function clamp(value, min = 0, max = 100) {
@@ -62,7 +62,7 @@ export function fitsStorageSlot(batch = {}) {
   const slotDimensions = [
     STORAGE_SLOT_LIMITS.heightCm,
     STORAGE_SLOT_LIMITS.widthCm,
-    STORAGE_SLOT_LIMITS.depthCm,
+    STORAGE_SLOT_LIMITS.lengthCm,
   ].sort((left, right) => right - left)
   if (!packageDimensions.every((dimension, index) => dimension <= slotDimensions[index])) return false
 
